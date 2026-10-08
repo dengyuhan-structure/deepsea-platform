@@ -8,7 +8,8 @@
     "  measured_farmed    实测·养殖     最好：研究对象就是养殖鱼，与本项目场景一致",
     "  measured_wild      实测·野生     次之：野生群体，体型可能与养殖群体有差",
     "  predicted          贝叶斯预测    FishBase 无该种实测数据时的模型外推，不确定性大",
-    "  predicted_no_data  预测·零记录  FishBase 该种实测文献数为 0，纯靠科属先验外推"
+    "  predicted_no_data  预测·零记录  FishBase 该种实测文献数为 0，纯靠科属先验外推",
+    "2026-10-06 补入：子代理检索（pypdf 抽 11 篇论文完整 Table 1 + FishBase 271 条）。红鳍东方鲀一条由队长独立复核（自行下载同一 PDF，表格逐字匹配）。"
   ],
   "_单位约定": "W(g) = a × L(cm)^b（统一换算到 cm 与 g 之后填入）",
   "species": {
@@ -86,7 +87,7 @@
     ],
     "卵形鲳鲹": [
       {
-        "a": 0.0640,
+        "a": 0.064,
         "b": 2.5349,
         "length_type": "total length",
         "length_unit": "cm",
@@ -100,6 +101,312 @@
         "source": "Guo Huayang, Ma Zhenhua, Jiang Shigui, Zhang Dianchang, Zhang Nan, Li Youning (2014). Length-weight relationship of oval pompano, Trachinotus ovatus (Linnaeus, 1758) (Pisces: Carangidae) cultured in open sea floating sea cages in South China Sea. Indian Journal of Fisheries, 61(1): 93-95.",
         "source_url": "https://epubs.icar.org.in/index.php/IJF/article/view/30269",
         "note": "同一篇原文另给出成熟个体 W = 0.1198 × L^2.5248（同文献内的对照值）。结论为负异速生长。⚠️ 原文摘要未写明体长类型（TL/SL/FL），本表按 TL 处理并标为推断；单位 cm/g 由数值自洽性反算确认。"
+      }
+    ],
+    "牙鲆": [
+      {
+        "a": 0.0044,
+        "b": 3.243,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 281,
+        "length_range": null,
+        "r2": 0.963,
+        "evidence": "measured_wild",
+        "scope": "野生 · 底拖网",
+        "site": "韩国东海岸 2011-2012",
+        "source": "Kwak, S.N. & Park, J.M. (2016). Length-weight relationships for 10 fish species from the eastern coast of Korea. Journal of Applied Ichthyology, 32(1): 160-162.",
+        "source_url": "https://doi.org/10.1111/jai.12932",
+        "note": "表头逐字为 Total length (cm) | Weight (g) | W = aLb。95% CI: a 0.0034-0.0058, b 3.168-3.318。⚠️ FishBase 的 Sproul & Tominaga 1992（a=0.0118/0.0123）b 被人为固定为 3.000，已剔除。"
+      }
+    ],
+    "红鳍东方鲀": [
+      {
+        "a": 0.0127,
+        "b": 3.2,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 28,
+        "length_range": null,
+        "r2": 0.969,
+        "evidence": "measured_wild",
+        "scope": "野生 · 定置刺网",
+        "site": "中国黄海北部大连近海 38°49'N,121°25'E",
+        "source": "Wu, et al. (2018). Length-weight relationships of three fish species from the northern Yellow Sea, China. Journal of Applied Ichthyology, 34(5): 1230-1232.",
+        "source_url": "https://doi.org/10.1111/jai.13764",
+        "note": "✅ 本会话独立复核：队长自己下载该 PDF，抽出表格逐字匹配（28 / 12.5 / 37.6 / 33.3 / 1493.62 / 0.0127 / 3.200 / 0.969）。原文方法写明「The total length (TL, cm) and body weight (W, g) were measured to the nearest 0.1 cm and 0.1 g」。95% CI: a 0.0063-0.0255, b 2.9742-3.4256。"
+      }
+    ],
+    "真鲷": [
+      {
+        "a": 0.0135,
+        "b": 3.073,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 30,
+        "length_range": null,
+        "r2": 0.985,
+        "evidence": "measured_wild",
+        "scope": "野生 · 小型底拖网",
+        "site": "韩国东南部东海岸 2006",
+        "source": "Park, J.M. & Huh, S.H. (2015). Length-weight relationships for 11 fish species from the south-eastern coast of Korea. Acta Ichthyologica et Piscatoria, 45(4): 427-431.",
+        "source_url": "https://doi.org/10.3750/AIP2015.45.4.13",
+        "note": "表头 Length [cm] | Weight [g] | W = aLb。95% CI: a 0.0075-0.0242, b 2.897-3.249。⚠️ FishBase 另有 Wang et al. 2011 一条是 SL 且为幼鱼（a=0.0536, b=2.920, 5.8-12.2 cm），体长类型不同，不可混用。"
+      }
+    ],
+    "黑鲷": [
+      {
+        "a": 0.0118,
+        "b": 3.102,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 566,
+        "length_range": null,
+        "r2": 0.995,
+        "evidence": "measured_wild",
+        "scope": "野生 · 鱼市取样",
+        "site": "韩国南部海域 2005-2006",
+        "source": "Huh, S.H., et al. (2017). Length-weight relationships of 10 fish species from the southern sea of Korea. Journal of Applied Ichthyology, 33(3): 649-651.",
+        "source_url": "https://doi.org/10.1111/jai.13345",
+        "note": "表头 Total length (cm) | Weight (g) | W = aLb。95% CI: a 0.0112-0.0124, b 3.083-3.120。样本量大（N=566）。"
+      }
+    ],
+    "美国红鱼": [
+      {
+        "a": 0.026,
+        "b": 2.922,
+        "length_type": "standard length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 59,
+        "length_range": null,
+        "r2": 0.991,
+        "evidence": "measured_wild",
+        "scope": "野生",
+        "site": "美国路易斯安那州 Pontchartrain 湖 2000-2012",
+        "source": "O'Connell, M.T. & O'Connell, A.M. (2016). Length-weight relationships of red drum and spotted seatrout from Louisiana. Journal of Applied Ichthyology, 32(6): 1261-1263.",
+        "source_url": "https://doi.org/10.1111/jai.13105",
+        "note": "🔴 **体长类型是 SL 不是 TL。** 原文方程逐字：log10TW (g) = log10a + b·log10SL (cm)。95% CI: a 0.021-0.032, b 2.848-2.996。⚠️ 同篇 Table 1 另有 TL = 1.404 + 1.172·SL（体长-体长换算），别当成 a、b。"
+      }
+    ],
+    "鞍带石斑鱼": [
+      {
+        "a": 0.0073,
+        "b": 3.2628,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": null,
+        "length_range": null,
+        "r2": 0.9453,
+        "evidence": "measured_farmed",
+        "scope": "养殖 · 循环水 RAS · 5 个月",
+        "site": "中国广东大亚湾水产试验中心",
+        "source": "黄锦雄, 杨宇晴, 张海发, 黄靖荃, 张磊, 蔡秀娜 (2012). 循环水养殖条件下鞍带石斑鱼生长特点研究. 渔业现代化, 39(1): 51-54.",
+        "source_url": "",
+        "note": "🟢 少见的一条**养殖群体**参数。原文：全长与体重乘幂回归 y = 0.0073x^3.2628, R²=0.9453，正异速生长。⚠️ 摘要未声明单位，按量纲自洽推断为 cm/g（L=60cm → 4.6 kg 合理；若 mm → 2.3 吨荒谬）。引用时须注明「单位为依据量纲自洽推断」。"
+      }
+    ],
+    "梭鱼": [
+      {
+        "a": 0.0147,
+        "b": 2.843,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 203,
+        "length_range": null,
+        "r2": 0.962,
+        "evidence": "measured_wild",
+        "scope": "野生 · 流刺网",
+        "site": "中国辽宁大阳河下游 2020",
+        "source": "Yang, et al. (2022). Length-weight relationships of fishes from the Dayang River, China. Journal of Applied Ichthyology, 38(2): 252-254.",
+        "source_url": "https://doi.org/10.1111/jai.14260",
+        "note": "中国本地数据。体长 15.6-66.2 cm，体重 37.00-2699.40 g。"
+      }
+    ],
+    "许氏平鲉": [
+      {
+        "a": 0.0086,
+        "b": 3.234,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 812,
+        "length_range": null,
+        "r2": 0.982,
+        "evidence": "measured_wild",
+        "scope": "野生",
+        "site": "中国山东荣成湾 2009-2014",
+        "source": "Wang, L.J., Wu, Z.H., Nie, M.M., Liu, M.X., Liu, W., You, F. (2016). Length-weight relationships and length-length relationships of 13 fish species in Rongcheng Bay, China. Journal of Applied Ichthyology, 32(4): 737-739.",
+        "source_url": "https://doi.org/10.1111/jai.13058",
+        "note": "🟢 **中国海域 + 大样本（N=812）**。体长 5.6-34.3 cm，体重 1.91-550.00 g。另有 Wang et al. 2013 海州湾一条：a=0.00637, b=3.37, TL, N=334, r²=0.987。"
+      }
+    ],
+    "大泷六线鱼": [
+      {
+        "a": 0.0062,
+        "b": 3.24,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 397,
+        "length_range": null,
+        "r2": 0.979,
+        "evidence": "measured_wild",
+        "scope": "野生",
+        "site": "中国山东荣成湾 2009-2014",
+        "source": "Wang, L.J., et al. (2016). Length-weight relationships and length-length relationships of 13 fish species in Rongcheng Bay, China. Journal of Applied Ichthyology, 32(4): 737-739.",
+        "source_url": "https://doi.org/10.1111/jai.13058",
+        "note": "🟢 中国数据。原文方法明写「W is the total weight of fish in g」。体长 6.6-25.7 cm，体重 2.31-185.45 g。另有 Wang et al. 2013 海州湾一条：a=0.00456, b=3.36, TL, N=1323, r²=0.983（样本量更大）。"
+      }
+    ],
+    "绿鳍马面鲀": [
+      {
+        "a": 0.00944,
+        "b": 3.14,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 26,
+        "length_range": null,
+        "r2": 0.988,
+        "evidence": "measured_wild",
+        "scope": "野生",
+        "site": "中国海州湾 2011",
+        "source": "Wang, X.H., et al. (2013). Length-weight relationships of 10 fish species from Haizhou Bay, China. Journal of Applied Ichthyology.",
+        "source_url": "",
+        "note": "中国数据。表头 L (cm) W (g)。体长 8.0-33.3 cm，体重 6.33-630 g。⚠️ 同属 T. modestus 有 Wu 2018 数据（a=0.0039/b=3.367），**不是一个种，别混用**。"
+      }
+    ],
+    "黄盖鲽": [
+      {
+        "a": 0.01,
+        "b": 3.112,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 452,
+        "length_range": null,
+        "r2": 0.974,
+        "evidence": "measured_wild",
+        "scope": "野生 · 底拖网",
+        "site": "韩国东海岸 2011-2012",
+        "source": "Kwak, S.N. & Park, J.M. (2016). Length-weight relationships for 10 fish species from the eastern coast of Korea. Journal of Applied Ichthyology, 32(1): 160-162.",
+        "source_url": "https://doi.org/10.1111/jai.12932",
+        "note": "体长 11.7-46.3 cm，体重 18.0-1413.3 g。另有 Park & Huh 2015：a=0.0078, b=3.136, TL, N=231, r²=0.987。"
+      }
+    ],
+    "黄鳍鲷": [
+      {
+        "a": 0.0127,
+        "b": 3.11,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 38,
+        "length_range": null,
+        "r2": 0.971,
+        "evidence": "measured_wild",
+        "scope": "野生",
+        "site": "中国东海 27.306°N,120.918°E 2015-2016",
+        "source": "Wang, et al. (2017). Length-weight relationships of five fish species from the East China Sea. Journal of Applied Ichthyology, 33(4): 853-854.",
+        "source_url": "https://doi.org/10.1111/jai.13375",
+        "note": "🟢 中国东海本地数据。体长 11.2-19.2 cm，体重 22.0-158.1 g。⚠️ FishBase 另有 Wang et al. 2016 闽江口一条是 **FL**（a=0.01910, b=3.110），体长类型不同不可混用。"
+      }
+    ],
+    "半滑舌鳎": [
+      {
+        "a": 0.0066,
+        "b": 2.98,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 87,
+        "length_range": null,
+        "r2": 0.979,
+        "evidence": "measured_wild",
+        "scope": "野生 · 底拖网",
+        "site": "中国渤海 2003-2005",
+        "source": "Liu, et al. (2013). Length-weight relationships of 12 fish species from the Yellow Sea and Bohai Sea, China. Journal of Applied Ichthyology, 29(2): 474-475.",
+        "source_url": "https://doi.org/10.1111/jai.12095",
+        "note": "中国数据。体长 26.3-61.1 cm。同篇另给黄海群体一条：a=0.0032, b=3.18, N=71, 18.7-49.9 cm, r²=0.962。⚠️ 原文未标体长类型、体重单位按 g 推断。"
+      }
+    ],
+    "星突江鲽": [
+      {
+        "a": 0.0121,
+        "b": 3.081,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 250,
+        "length_range": null,
+        "r2": 0.96,
+        "evidence": "measured_wild",
+        "scope": "野生 · 底拖网",
+        "site": "韩国东海岸 2011-2012",
+        "source": "Kwak, S.N. & Park, J.M. (2016). Length-weight relationships for 10 fish species from the eastern coast of Korea. Journal of Applied Ichthyology, 32(1): 160-162.",
+        "source_url": "https://doi.org/10.1111/jai.12932",
+        "note": "体长 17.6-48.5 cm，体重 99.0-2354.6 g。"
+      }
+    ],
+    "圆斑星鲽": [
+      {
+        "a": 0.0077,
+        "b": 3.13,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 16,
+        "length_range": null,
+        "r2": 0.935,
+        "evidence": "measured_wild",
+        "scope": "野生 · 底拖网",
+        "site": "中国黄渤海 2003-2005",
+        "source": "Liu, et al. (2013). Length-weight relationships of 12 fish species from the Yellow Sea and Bohai Sea, China. Journal of Applied Ichthyology, 29(2): 474-475.",
+        "source_url": "https://doi.org/10.1111/jai.12095",
+        "note": "⚠️ **样本量只有 16，可靠性有限**（95% CI 极宽：a 0.0015-0.0403, b 2.65-3.60）。原文拼作 Verasper variegates。体长 28.0-42.3 cm。"
+      }
+    ],
+    "褐篮子鱼": [
+      {
+        "a": 0.008,
+        "b": 3.239,
+        "length_type": "fork length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": 119,
+        "length_range": null,
+        "r2": 0.957,
+        "evidence": "measured_wild",
+        "scope": "野生",
+        "site": "日本熊野滩",
+        "source": "Kato, et al. (2024). FishBase Ref. 131261.",
+        "source_url": "",
+        "note": "⚠️ 体长类型是 **FL（叉长）**，不是全长。体长 13.3-38.6 cm。"
+      }
+    ],
+    "赤点石斑鱼": [
+      {
+        "a": 0.0304,
+        "b": 2.971,
+        "length_type": "total length",
+        "length_unit": "cm",
+        "weight_unit": "g",
+        "n": null,
+        "length_range": null,
+        "r2": null,
+        "evidence": "measured_wild",
+        "scope": "野生",
+        "site": "中国广东海丰 / 陆丰 1982-1985",
+        "source": "Li, et al. (1988). FishBase 转述。",
+        "source_url": "",
+        "note": "⚠️ **证据最弱的一条**：FishBase 转述，N、r²、体长类型原文均缺，体长类型按 TL 推断。用前建议另找原始文献。"
       }
     ]
   }

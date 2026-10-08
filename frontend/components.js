@@ -442,5 +442,92 @@
       '</div>'
   };
 
+  /* ============================================================
+     阈值依据提示：数值旁边一个灰色问号，悬停显示解释与出处
+     ============================================================
+     为什么不用纯 CSS 的 :hover 弹层：
+       阈值都放在表格里，而表格容器是 overflow:auto 的 ——
+       CSS 绝对定位的弹层会被容器**裁掉**，鼠标一移过去就没了。
+     所以弹层用 position:fixed（teleport 到 body）由 JS 按问号位置定位，能逃出任何 overflow。
+
+     为什么必须做这个：
+       任务书要求逐项说明「阈值从哪来（标准？文献？自己设的？）」。
+       以前页面上只有一行小字「经验阈值，未经现场标定」，
+       答辩时评委问「凭什么定 3°」答不出细节。现在悬停就能看到每一条的依据。
+     ============================================================ */
+  C.HelpDot = {
+    name: 'help-dot',
+    props: {
+      /* { level, text, source, url } —— level 取值见下面 lvStyle */
+      info: { type: Object, default: null },
+      label: { type: String, default: '阈值依据' }
+    },
+    data: function () { return { open: false, top: 0, left: 0, placement: 'top' }; },
+    beforeUnmount: function () { if (this._t) clearTimeout(this._t); },
+    computed: {
+      lv: function () { return (this.info && this.info.level) || '未标注'; },
+      /* 证据强度配色：越硬越绿，找不到越红 —— 一眼看出哪几项底气不足 */
+      lvStyle: function () {
+        const m = {
+          '直接支持': { bg: '#F0FDF4', br: '#86EFAC', fg: '#166534' },
+          '间接支持': { bg: '#EFF6FF', br: '#BFDBFE', fg: '#1D4ED8' },
+          '仅类比':   { bg: '#FFFBEB', br: '#FDE68A', fg: '#92400E' },
+          '没找到':   { bg: '#FEF2F2', br: '#FECACA', fg: '#991B1B' }
+        };
+        return m[this.lv] || { bg: '#F3F4F6', br: '#E5E7EB', fg: '#6B7280' };
+      }
+    },
+    methods: {
+      show: function (e) {
+        if (this._t) { clearTimeout(this._t); this._t = null; }
+        if (!this.info) return;
+        const r = e.currentTarget.getBoundingClientRect();
+        const W = 380;
+        this.left = Math.max(8, Math.min(r.left - W / 2 + 8, window.innerWidth - W - 8));
+        this.top = r.top - 10;
+        this.placement = r.top < 280 ? 'bottom' : 'top';
+        this.open = true;
+      },
+      /* 延迟关闭：弹层被 teleport 到 body，不在 .hd-wrap 里，
+         鼠标从问号移到弹层上会触发 mouseleave。给 260ms 宽限，
+         期间移到弹层上就被 cancelHide 取消 —— 否则里面的链接根本点不到。 */
+      hide: function () {
+        const self = this;
+        if (this._t) clearTimeout(this._t);
+        this._t = setTimeout(function () { self.open = false; self._t = null; }, 260);
+      },
+      cancelHide: function () {
+        if (this._t) { clearTimeout(this._t); this._t = null; }
+      }
+    },
+    template: [
+      '<span class="hd-wrap" @mouseenter="show" @mouseleave="hide" @focusin="show" @focusout="hide" tabindex="0">',
+      '  <span class="hd-dot" :class="{ \'hd-open\': open }">?</span>',
+      '  <teleport to="body">',
+      '    <div v-if="open" class="hd-pop"',
+      '         :class="placement === \'top\' ? \'hd-pop-top\' : \'hd-pop-bottom\'"',
+      '         :style="{ top: top + \'px\', left: left + \'px\' }"',
+      '         @mouseenter="cancelHide" @mouseleave="hide">',
+      '      <div class="hd-head">',
+      '        <span class="hd-badge"',
+      '              :style="{ background: lvStyle.bg, borderColor: lvStyle.br, color: lvStyle.fg }">',
+      '          证据强度：{{ lv }}',
+      '        </span>',
+      '        <span class="hd-title">{{ label }}</span>',
+      '      </div>',
+      '      <div v-if="info.text" class="hd-text">{{ info.text }}</div>',
+      '      <div v-if="info.source" class="hd-src"><b>出处</b>：{{ info.source }}</div>',
+      '      <div v-if="info.url" class="hd-src">',
+      '        <a :href="info.url" target="_blank" rel="noopener">{{ info.url }} ↗</a>',
+      '      </div>',
+      '      <div v-if="!info.text && !info.source" class="hd-text muted">',
+      '        这一项还没有找到依据 —— 页面上标注为「经验阈值，未经现场标定」。',
+      '      </div>',
+      '    </div>',
+      '  </teleport>',
+      '</span>'
+    ].join('\n')
+  };
+
   global.C = C;
 })(window);

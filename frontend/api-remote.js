@@ -103,6 +103,14 @@
     for (let i = 0; i < _alarms.length; i++) if (_alarms[i].alarm_event_id === id) return _alarms[i];
     return null;
   };
+  /* 手动停止一条还没到终态的命令（组员反馈：投喂要能中途停）。
+     只对「未到终态」的命令有效 —— 已成功/已失败的改不了，那是历史事实。 */
+  M.cancelCommand = function (commandId, reason) {
+    return post('/api/commands/' + encodeURIComponent(commandId) + '/cancel',
+                { reason: reason || '值班人手动停止' })
+      .then(function (r) { poll(); return r; });
+  };
+
   M.sendCommand = function (deviceId, type, params, opts) {
     const body = { device_id: deviceId, command_type: type, params: params || {} };
     if (opts && opts.inject) body.inject = opts.inject;
@@ -126,5 +134,133 @@
       M._bump();
     }
   });
+
+  /* NDBC 直连状态。**只读缓存状态，不在渲染时联网** ——
+     联网只在用户点「立即拉取最新」时发生（M.ndbcRefresh）。 */
+  M.ndbcStatus = function () { return M._ndbc || null; };
+  function pullNdbcStatus() {
+    get('/api/ndbc/status').then(function (d) {
+      if (d && Array.isArray(d.stations)) { M._ndbc = d; M._bump(); }
+    });
+  }
+  pullNdbcStatus();
+
+  M.ndbcRefresh = function (stations) {
+    var body = {};
+    if (stations && stations.length) body.stations = stations;
+    return post('/api/ndbc/refresh', body).then(function (r) {
+      if (r && r.status) { M._ndbc = r.status; M._bump(); }
+      return r;
+    });
+  };
+
+  /* ---------- 管理板块：养殖生产配置 ----------
+     这一块是"配置驱动"的落点：网箱养什么鱼，全平台的阈值与参数就跟着变。
+     所以每次写操作成功都要 _bump()，让所有页面立刻重算。 */
+
+  /* 鱼种温度参数库（30 个种）—— 管理板块的鱼种档案要用，
+     网箱改鱼种时也要靠它判断"这个种有没有温度参数、能不能养" */
+  M.speciesTemp = function () { return M._speciesTemp || null; };
+  get('/api/species/temp').then(function (d) {
+    if (d && Array.isArray(d.species)) { M._speciesTemp = d; M._bump(); }
+  });
+
+  M.farm = function () { return M._farm || null; };
+  function pullFarm() {
+    get('/api/farm').then(function (d) {
+      if (d && d.cages) { M._farm = d; M._bump(); }
+    });
+  }
+  pullFarm();
+
+  M.farmLedger = function () { return M._ledger || null; };
+  function pullLedger(cageId) {
+    var q = cageId ? ('?cage_id=' + encodeURIComponent(cageId)) : '';
+    return get('/api/farm/ledger' + q).then(function (d) {
+      if (d && d.ledger) { M._ledger = d; M._bump(); }
+      return d;
+    });
+  }
+  pullLedger();
+
+  M.farmDevices = function () { return M._farmDevices || null; };
+  function pullFarmDevices() {
+    return get('/api/farm/devices').then(function (d) {
+      if (d && d.devices) { M._farmDevices = d; M._bump(); }
+      return d;
+    });
+  }
+  pullFarmDevices();
+
+  /* 改网箱养的鱼 —— 全平台阈值随之重算 */
+  M.setCageSpecies = function (cageId, species) {
+    return post('/api/farm/cage/species', { cage_id: cageId, species: species })
+      .then(function (r) {
+        return pullFarm().then(function () { pullFarmDevices(); return r; });
+      });
+  };
+
+  /* 记一笔台账 */
+  M.addLedger = function (entry) {
+    return post('/api/farm/ledger', entry).then(function (r) {
+      return pullLedger().then(function () { pullFarm(); return r; });
+    });
+  };
+
+  /* 记一次标定 */
+  M.calibrate = function (deviceId, inst, cert) {
+    return post('/api/farm/calibrate',
+                { device_id: deviceId, institution: inst, cert_no: cert })
+      .then(function (r) { return pullFarmDevices().then(function () { return r; }); });
+  };
+
+  M.reloadFarm = function () {
+    return Promise.all([pullFarm(), pullLedger(), pullFarmDevices()]);
+  };
+
+  /* ==========================================================================
+     曲线数据的自动刷新
+     ==========================================================================
+     🔴 为什么要有这个（2026-10-07 组员反馈发现的平台级问题）：
+        原来只有「命令 / 告警 / 设备状态」在轮询（每 900ms），
+        **曲线数据（/api/env、/api/struct、/api/fish）只在进页面时拉一次** ——
+        之后就不动了。结果是：全平台所有曲线都是「进页面那一刻的快照」。
+
+        李志成在补光页发现的（「调了档位图不动，刷新一下才变」），
+        但根子不在补光页，**在每个有曲线的页面**。
+
+     【怎么用】页面里这样接：
+         mounted: function () {
+           this.unsub = API.bind(this, this.load);   // 一行搞定
+           this.load();
+         },
+         beforeUnmount: function () { if (this.unsub) { this.unsub(); this.unsub = null; } }
+     ========================================================================== */
+  M.SERIES_REFRESH_MS = 3000;      // 3 秒。够看出"在动"，又不会把本地服务打爆
+
+  var _seriesSubs = [];
+  M.onSeriesRefresh = function (fn) {
+    _seriesSubs.push(fn);
+    return function () {
+      var i = _seriesSubs.indexOf(fn);
+      if (i >= 0) _seriesSubs.splice(i, 1);
+    };
+  };
+  setInterval(function () {
+    _seriesSubs.slice().forEach(function (f) {
+      se(function () { f(); });          // 一个页面报错不影响其他页面
+    });
+  }, M.SERIES_REFRESH_MS);
+
+  /* 页面标准接法：一个取消函数管两件事（数据变化 + 定时刷新）。
+     用法见上面的注释。 */
+  M.bind = function (vm, load) {
+    var s1 = M.subscribe(function () { vm.tick++; });
+    var s2 = M.onSeriesRefresh(function () { load.call(vm); });
+    return function () { s1(); s2(); };
+  };
+
+  /* 吞掉异常的小工具 —— 定时器里抛错会中断整轮刷新 */
+  function se(fn) { try { fn(); } catch (e) { /* 忽略单个页面的异常 */ } }
 
 })(window);

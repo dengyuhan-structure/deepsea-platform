@@ -1,0 +1,253 @@
+{
+  "_说明": [
+    "养殖生产配置 —— 管理板块的数据源。",
+    "",
+    "为什么要有这个文件：",
+    "  以前平台把「养什么鱼」写死在代码里，导致参数散落各处、改一处漏一处。",
+    "  实测踩过两次：后端硬编码体长体重参数 0.0218/3.02；水温阈值写死 20.5℃。",
+    "  现在改成：**这里说某个网箱养什么鱼，全平台的阈值与参数就跟着变。**",
+    "",
+    "文件性质：这是**配置**不是运行时状态，随仓库走，改动可在 GitHub 上看历史。",
+    "  用 JSON 不用数据库：R1 要求零依赖，json 是标准库，而且可读、可 diff、可手改。"
+  ],
+  "version": "1.0",
+  "updated": "2026-10-06",
+  "sites": [
+    {
+      "site_id": "site_01",
+      "site_name": "模拟养殖站点",
+      "kind": "farm",
+      "latitude": 26.1,
+      "longitude": 119.9,
+      "farming_depth_m": 20,
+      "location_note": "福建沿海 · 深远海网箱养殖场景",
+      "cages": [
+        {
+          "cage_id": "cage_01",
+          "cage_name": "1 号网箱",
+          "species": "罗非鱼",
+          "spec": {
+            "shape": "圆形",
+            "circumference_m": 60,
+            "depth_m": 8,
+            "net_mesh_mm": 40,
+            "net_material": "超高分子量聚乙烯（UHMWPE）",
+            "effective_volume_m3": 285,
+            "commissioned": "2025-09-15"
+          },
+          "stocking": {
+            "date": "2026-04-10",
+            "init_count": 1200,
+            "init_size_g": 420,
+            "fingerling_source": "福建宁德育苗场",
+            "plan_harvest": "2027-03-01",
+            "target_size_g": 600
+          },
+          "status": "in_use",
+          "note": "平台主养网箱。温度阈值与体长体重参数均按大黄鱼自动取值。"
+        },
+        {
+          "cage_id": "cage_02",
+          "cage_name": "2 号网箱",
+          "species": "许氏平鲉",
+          "spec": {
+            "shape": "圆形",
+            "circumference_m": 50,
+            "depth_m": 8,
+            "net_mesh_mm": 35,
+            "net_material": "超高分子量聚乙烯（UHMWPE）",
+            "effective_volume_m3": 198,
+            "commissioned": "2025-09-15"
+          },
+          "stocking": {
+            "date": "2026-05-06",
+            "init_count": 900,
+            "init_size_g": 180,
+            "fingerling_source": "山东荣成育苗场",
+            "plan_harvest": "2027-05-01",
+            "target_size_g": 400
+          },
+          "status": "in_use",
+          "note": "🔴 刻意配一个**冷水性**鱼种（最适 8~25℃），用来验证「不同网箱养不同鱼、阈值各自取值」—— 许氏平鲉高告警线 26℃ 而大黄鱼 28℃。"
+        }
+      ],
+      "devices": [
+        {
+          "device_id": "sensor_temp_01",
+          "device_type": "sensor",
+          "metric": "water_temp",
+          "location": "cage_01 · 水下 3 m",
+          "installed": "2025-09-20",
+          "vendor": "青岛海仪",
+          "calibration": {
+            "last": "2026-08-20",
+            "cycle_days": 180,
+            "institution": "福建省计量科学研究院",
+            "cert_no": "FJ-2026-0820-018"
+          }
+        },
+        {
+          "device_id": "sensor_do_01",
+          "device_type": "sensor",
+          "metric": "dissolved_oxygen",
+          "location": "cage_01 · 水下 3 m",
+          "installed": "2025-09-20",
+          "vendor": "青岛海仪",
+          "calibration": {
+            "last": "2026-04-12",
+            "cycle_days": 180,
+            "institution": "福建省计量科学研究院",
+            "cert_no": "FJ-2026-0412-019"
+          },
+          "note": "即将到期 —— 页面应提前 30 天提醒"
+        },
+        {
+          "device_id": "sensor_tilt_01",
+          "device_type": "sensor",
+          "metric": "tilt",
+          "location": "cage_01 · 浮架",
+          "installed": "2025-09-20",
+          "vendor": "深圳瑞芬",
+          "calibration": {
+            "last": "2025-10-08",
+            "cycle_days": 180,
+            "institution": "深圳市计量质量检测研究院",
+            "cert_no": "SZ-2025-1008-233"
+          },
+          "note": "⚠️ 已超期 —— 这一条正是页面要主动提醒出来的东西（呼应页面上「经验阈值，未经现场标定」那句）"
+        },
+        {
+          "device_id": "sensor_tension_01",
+          "device_type": "sensor",
+          "metric": "anchor_tension",
+          "location": "cage_01 · 锚链",
+          "installed": "2025-09-20",
+          "vendor": "深圳瑞芬",
+          "calibration": {
+            "last": "2025-10-08",
+            "cycle_days": 180,
+            "institution": "深圳市计量质量检测研究院",
+            "cert_no": "SZ-2025-1008-234"
+          },
+          "note": "⚠️ 已超期。倾角阈值 5°/15° 的依据来自规范，但传感器本身未按期标定 —— 两者要分开讲，不能混为一谈"
+        },
+        {
+          "device_id": "feeder_01",
+          "device_type": "feeder",
+          "metric": "feed_rate",
+          "location": "cage_01 · 投饵机",
+          "installed": "2025-09-20",
+          "vendor": "广东恒兴",
+          "calibration": {
+            "last": "2026-04-02",
+            "cycle_days": 365,
+            "institution": "厂家年度检定",
+            "cert_no": "HX-2026-0402-07"
+          }
+        },
+        {
+          "device_id": "light_01",
+          "device_type": "light",
+          "metric": "light_dimming",
+          "location": "cage_01 · 灯具",
+          "installed": "2025-09-20",
+          "vendor": "深圳洲明",
+          "calibration": {
+            "last": null,
+            "cycle_days": null,
+            "institution": null,
+            "cert_no": null
+          },
+          "note": "灯具为开关/调光器件，不做计量标定 —— 页面上显示「不适用」而不是「未标定」（cycle_days 置 null 即判定为不适用）"
+        }
+      ]
+    },
+    {
+      "site_id": "site_02",
+      "site_name": "NDBC 观测站点 42001",
+      "kind": "obs",
+      "latitude": 25.92,
+      "longitude": -89.64,
+      "station_id": "42001"
+    },
+    {
+      "site_id": "site_03",
+      "site_name": "NDBC 观测站点 46001",
+      "kind": "obs",
+      "latitude": 56.3,
+      "longitude": -148.02,
+      "station_id": "46001"
+    },
+    {
+      "site_id": "site_04",
+      "site_name": "NDBC 观测站点 51001",
+      "kind": "obs",
+      "latitude": 24.45,
+      "longitude": -162.0,
+      "station_id": "51001"
+    }
+  ],
+  "_台账说明": [
+    "存箱量流水。期末存箱量 = 放养 + 分箱入 − 分箱出 − 死淘 − 起捕。",
+    "为什么要台账：以前 fish_count 是纯仿真漂移，生物量喂给投喂决策就是错的。",
+    "有台账之后，仿真只在台账基线上加噪声，不再自由漂移。"
+  ],
+  "ledger": [
+    {
+      "ts": "2026-04-10",
+      "cage_id": "cage_01",
+      "type": "stock",
+      "count": 1200,
+      "note": "放养：宁德育苗场，平均 420 g"
+    },
+    {
+      "ts": "2026-04-28",
+      "cage_id": "cage_01",
+      "type": "mortality",
+      "count": -9,
+      "note": "转箱应激死亡"
+    },
+    {
+      "ts": "2026-06-15",
+      "cage_id": "cage_01",
+      "type": "mortality",
+      "count": -6,
+      "note": "高温期零星死亡"
+    },
+    {
+      "ts": "2026-08-03",
+      "cage_id": "cage_01",
+      "type": "split_out",
+      "count": -37,
+      "note": "分箱：转 cage_02 暂养"
+    },
+    {
+      "ts": "2026-09-20",
+      "cage_id": "cage_01",
+      "type": "mortality",
+      "count": -3,
+      "note": "台风过境后巡查发现"
+    },
+    {
+      "ts": "2026-05-06",
+      "cage_id": "cage_02",
+      "type": "stock",
+      "count": 900,
+      "note": "放养：荣成育苗场，平均 180 g"
+    },
+    {
+      "ts": "2026-05-25",
+      "cage_id": "cage_02",
+      "type": "mortality",
+      "count": -12,
+      "note": "适应期死亡"
+    },
+    {
+      "ts": "2026-07-18",
+      "cage_id": "cage_02",
+      "type": "mortality",
+      "count": -5,
+      "note": "低温应激"
+    }
+  ]
+}

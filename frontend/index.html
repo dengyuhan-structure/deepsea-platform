@@ -21,7 +21,16 @@
 <script src="mock.js"></script>
 <script src="api-remote.js"></script>
 <script src="components.js"></script>
-<script src="pages.js"></script>
+<!-- 页面按板块分文件，一人一个（见《AI协作指南》）。
+     每个文件自己初始化 window.PAGES，所以加载顺序无所谓。
+     新增页面文件时，在这里加一行就行 —— 这一行由队长加，组员不用碰。 -->
+<script src="pages/overview.js"></script>
+<script src="pages/fish.js"></script>
+<script src="pages/env.js"></script>
+<script src="pages/struct.js"></script>
+<script src="pages/ai.js"></script>
+<script src="pages/global.js"></script>
+<script src="pages/mgmt.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

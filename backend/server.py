@@ -48,6 +48,17 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+# NDBC 公开浮标数据源（backend/datasource/public/ndbc.py）
+# 用 sys.path 显式加目录 —— 这样双击 .bat 从任意工作目录启动都能 import 到
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "datasource", "public"))
+import ndbc                                                  # noqa: E402
+
+# 养殖生产配置（管理板块）：网箱养什么鱼、存箱量台账、设备标定
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import farm as farmmod                                       # noqa: E402
+FARM = farmmod.Farm()
+
 # ----------------------------------------------------------------------
 # 路径
 # ----------------------------------------------------------------------
@@ -65,6 +76,66 @@ FRONTEND = os.path.join(ROOT, "frontend")
 # ----------------------------------------------------------------------
 DATA_DIR = os.path.join(ROOT, "data")
 SPECIES_DB = {"species": [], "by_cn": {}}
+
+# ----------------------------------------------------------------------
+# 鱼种温度参数库（data/鱼种温度参数.json）
+#
+# 为什么水温告警要按鱼种走：
+#   原来用**一个统一阈值**（20.5℃ 提示 / 21.5℃ 告警）。但不同鱼种适宜温度差极大 ——
+#   大黄鱼最适 18~25℃、大菱鲆 15~18℃、罗非鱼 24~32℃、虹鳟 12~18℃。
+#   统一取 20.5℃ 的结果是：**大黄鱼在长得最好的时候被报警，大菱鲆常年误报。**
+#   现在改成「网箱里养什么鱼，就用什么鱼的温度阈值」。
+# ----------------------------------------------------------------------
+TEMP_DB = {"species": [], "by_cn": {}}
+
+
+def sync_sites_from_farm():
+    """把 farm.json 里的养殖信息覆盖到 SITES 上。
+
+    为什么：以前 species / stock_init_count 是写死在 SITES 里的，
+    改了 farm.json 也不生效。现在**以 farm.json 为准** —— 它才是"养什么鱼"的唯一事实来源。
+    """
+    global SITES
+    for s in SITES:
+        if s.get("kind") != "farm":
+            continue
+        cages = [c for c in FARM.all_cages() if c["site_id"] == s["site_id"]]
+        if not cages:
+            continue
+        main = cages[0]                      # 主网箱决定站点的"主养鱼种"
+        s["species"] = main.get("species")
+        s["cage_id"] = main.get("cage_id")
+        s["cage_count"] = len(cages)
+        s["cages"] = [{"cage_id": c["cage_id"], "cage_name": c.get("cage_name"),
+                       "species": c.get("species"),
+                       "current_count": FARM.stock_of(c["cage_id"])} for c in cages]
+        st = FARM.stock_summary(main["cage_id"])
+        if st.get("current_count"):
+            s["stock_init_count"] = st["current_count"]
+        if st.get("init_size_g"):
+            s["stock_init_size_g"] = st["init_size_g"]
+
+
+def load_temp_db():
+    """加载鱼种温度参数库；读不到不致命，页面会提示。"""
+    global TEMP_DB
+    path = os.path.join(DATA_DIR, "鱼种温度参数.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f).get("species", [])
+        TEMP_DB = {"species": rows, "by_cn": {r["species_cn"]: r for r in rows}}
+        n_ok = sum(1 for r in rows if r.get("temp_alarm_high") is not None)
+        if rows:
+            print("  鱼种温度库：%d 种，其中 %d 种给出了高温告警线" % (len(rows), n_ok))
+    except Exception as e:                                  # noqa: BLE001
+        print("  [警告] 鱼种温度库没读进来（%s）—— 水温阈值将回落到通用值" % e)
+        TEMP_DB = {"species": [], "by_cn": {}}
+
+
+def temp_of(species_cn):
+    """取某鱼种的温度参数；查不到返回 None，由调用方决定回落。"""
+    return TEMP_DB["by_cn"].get(species_cn)
+
 
 
 def load_species_db():
@@ -154,11 +225,20 @@ SITES = [
      "latitude": 26.10, "longitude": 119.90, "farming_depth_m": 20,
      # 主养种：大黄鱼（福建宁德一带的主养鱼种，与站点位置 26.1N/119.9E 对得上）
      "species": "大黄鱼", "stock_init_count": 1200, "stock_init_size_g": 420},
-    {"site_id": "site_02", "site_name": "NDBC 观测站点 41001", "kind": "obs",
-     "latitude": 34.72, "longitude": -72.27, "farming_depth_m": 0},
+    # site_02：原为 41001（EAST HATTERAS，美国东海岸），2026-10-06 更换。
+    # 原因：41001 是**停用站** —— 在 NDBC 在册（有经纬度）但 met=n / currents=n，
+    # 所有数据文件实测 404，连站点页都没有。平台上写着它的编号，评委一查就穿帮。
+    # 换成的 42001 实测数据新鲜完整（风速 199/200、水温 196、浪高 103 行有值）。
+    # 选它的理由：与 46001 形成**最大温差（11.5↔30.2℃）和最大海况反差（3.5↔0.4 m）**，
+    # 且暖水场景更接近中国南海的实际养殖条件。
+    {"site_id": "site_02", "site_name": "NDBC 观测站点 42001", "kind": "obs",
+     "station_id": "42001",
+     "latitude": 25.92, "longitude": -89.64, "farming_depth_m": 0},
     {"site_id": "site_03", "site_name": "NDBC 观测站点 46001", "kind": "obs",
+     "station_id": "46001",
      "latitude": 56.30, "longitude": -148.02, "farming_depth_m": 0},
     {"site_id": "site_04", "site_name": "NDBC 观测站点 51001", "kind": "obs",
+     "station_id": "51001",
      "latitude": 24.45, "longitude": -162.00, "farming_depth_m": 0},
 ]
 
@@ -169,10 +249,12 @@ STEP_SLOW = 30 * 1000       # 慢变量 30 秒（盐度 / pH，裁定 3）
 # ⚠️ 必须是**绝对值**，不能是「在基线上加几度」：
 #    水温基线带昼夜项 18.6 + sin((h-6)/24·2π)×1.8，
 #    夜里 22 点时 diurnal≈-0.87，基线只有 17.0℃ —— 加 4.2 也只到 21.4℃，
-#    刚好差 0.1 够不到 21.5 的告警阈值。
+#    刚好差 0.1 够不到告警阈值。
+#    🔴 2026-10-06：目标从 23.5℃ 上调到 30.5℃ —— 水温告警改为按鱼种取值后，
+#       大黄鱼（平台主养种）的告警线是 28.0℃，23.5℃ 再也触发不了了。
 #    结果就是「白天点造故障会报警、晚上点没反应」。
 #    现场答辩要是排在下午或晚上，这条竖线演示当场失败。
-HEAT_TARGET_C = 23.5
+HEAT_TARGET_C = 30.5
 
 
 # ======================================================================
@@ -200,11 +282,11 @@ def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None, 
         diurnal = math.sin((h - 6) / 24 * 2 * math.pi)
         offline = offline_from is not None and i >= offline_from
 
-        wave = r.gauss(3.2, .5) if storm else r.gauss(1.4, .25)
-        wind = r.gauss(17, 2.5) if storm else r.gauss(8.3, 1.2)
+        wave = r.gauss(4.6, .55) if storm else r.gauss(1.4, .25)
+        wind = r.gauss(19, 2.5) if storm else r.gauss(8.3, 1.2)
         base_water = 18.6 + diurnal * 1.8
         if heat:
-            # 朝 HEAT_TARGET_C 爬：无论几点，最后一定能越过 21.5
+            # 朝 HEAT_TARGET_C 爬：无论几点，最后一定能越过 28.0℃（大黄鱼告警线）
             prog = max(0.0, (i / n - 0.55) / 0.45)
             water = base_water + (HEAT_TARGET_C - base_water) * prog + r.gauss(0, .12)
         else:
@@ -294,8 +376,13 @@ def heat_grid():
     return g
 
 
-def struct_series(minutes=60):
-    """结构安全（接口文档 第五节）"""
+def struct_series(minutes=60, storm=False):
+    """结构安全（接口文档 第五节）
+
+    storm 参数：造故障「大风大浪」要能让网箱倾角与锚泊张力真的抬起来。
+    2026-10-06 加 —— 倾角阈值从 2°/3° 改成 5°/15° 后，
+    如果不联动海况，演示时永远触发不到预警。
+    """
     n = max(2, int(minutes * 60 * 1000 / STEP_FAST))
     now = int(time.time() * 1000) // 1000 * 1000
     t0 = now - minutes * 60 * 1000
@@ -307,21 +394,36 @@ def struct_series(minutes=60):
         day = max(0.0, math.sin((h - 6) / 12 * math.pi))
 
         # 姿态与张力：平时平稳，每 10 分钟来一次持续约 70 秒的「涌浪 / 阵风」事件。
-        # 为什么要这样建模：原来俯仰角是 gauss(2.4, .4) —— 长期骑在 2°/3° 阈值上，
+        # 为什么要这样建模：原来俯仰角是 gauss(2.4, .4) —— 长期骑在阈值上，
         # 噪声反复穿越阈值，一小时刷出上千条告警，界面上看着像系统坏了。
-        # 真实养殖场平时就是平稳的，异常是「事件」，不是常态。
+        # 真实网箱平时就是平稳的，倾斜是「事件」，不是常态。
+        #
+        # 🔴 2026-10-06 改：阈值从 2°/3° 改为 5°/15° 后，原来的幅值（峰 ~3.4°）永远触不到。
+        #    同时把倾斜与「大风大浪」造故障**联动** —— 物理上说得通（海况差 → 网箱倾斜），
+        #    演示时也有明确路径：点「触发大风大浪」→ 倾角抬升 → 红色预警。
         per = 120                       # 120 个点 = 10 分钟
         phase = i % per
         if phase < 14:
-            mag = 2.2 if (i // per) % 2 == 0 else 1.3
+            # mag 5.5 → 峰值约 6.7°，越过 5° 黄色线；台风级 mag 15 → 峰值约 16°，越过 15° 红色线
+            if storm:
+                mag = 15.0              # 造故障：大风大浪 → 达到 CCS 稳性衡准角量级
+            else:
+                # 平常幅值刻意压在 5° 提示线**下方**（峰 4.2° + 噪声 ≈ 4.9°），
+                # 否则每 10 分钟就报一次橙色预警，又变成「狼来了」
+                mag = 3.0 if (i // per) % 2 == 0 else 1.6
             excursion = mag * math.sin(phase / 14 * math.pi)
         else:
             excursion = 0.0
 
         roll = 1.1 + excursion * 0.5 + r.gauss(0, .18)
         pitch = 1.2 + excursion + r.gauss(0, .22)
-        # 海况差 → 张力跟着涨（物理上说得通）
-        tension = 42.5 + excursion * 4.5 + r.gauss(0, 1.2)
+        # 海况差 → 张力跟着涨（物理上说得通：大浪对锚泊的载荷是非线性的，
+        # 所以造故障时耦合系数更大）。
+        # 数值配着 design_tension = 60 kN 调，让两条线各就各位 ——
+        # **平常海况不许越 80% 黄线**，否则黄色预警天天响，等于没有预警（"狼来了"）：
+        #   平常（excursion 峰 4.6，系数 1.15）→ 约 42.8 + 噪声 ≈ 77%  < 80%  ✅
+        #   造故障（excursion 峰 15，系数 1.6） → 约 61.5 + 噪声 ≈ 105% > 95%  ✅
+        tension = 37.5 + excursion * (1.6 if storm else 1.15) + r.gauss(0, 1.2)
         soc = min(100.0, max(8.0, soc + (0.18 if day > .2 else -0.22) + r.gauss(0, .12)))
         out.append({
             "ts": ts,
@@ -398,6 +500,8 @@ class Platform(object):
         self.commands = []
         self._seq = 0
         self.alarms = self._seed_alarms()
+        self._seed_commands()      # 预置几条真实历史命令（投喂记录从它派生）
+
 
     def _seed_alarms(self):
         now = int(time.time() * 1000)
@@ -406,17 +510,18 @@ class Platform(object):
              "alarm_status": "active", "alarm_ts": now - 8 * 60 * 1000,
              "trigger_field": "tension_pct", "trigger_value": 83.2, "trigger_threshold": 80,
              "rule_id": "R-TENSION-01", "rule_name": "锚泊张力黄色预警",
-             "rule_condition": "tension_pct > 80", "combine_condition": None,
+             "rule_condition": "张力利用率 R > 80%（R = T_max / T_design，T_design = PB/1.67）",
+             "combine_condition": None,
              "trigger_snapshot": {"anchor_tension": 49.9, "design_tension": 60, "tension_pct": 83.2, "ts": now - 8 * 60 * 1000},
              "handling_advice": "检查锚链受力，必要时降低流速影响",
              "handle_status": "pending", "confirm_status": "unconfirmed"},
             {"alarm_event_id": "ALM-0002", "alarm_type": "tilt", "risk_level": "orange",
              "alarm_status": "acknowledged", "alarm_ts": now - 26 * 60 * 1000,
-             "trigger_field": "tilt_pitch", "trigger_value": 2.7, "trigger_threshold": 2,
-             "rule_id": "R-TILT-02", "rule_name": "网箱倾斜橙色预警",
-             "rule_condition": "tilt_pitch > 2 且 wave_height > 1.5",
+             "trigger_field": "tilt_pitch", "trigger_value": 6.2, "trigger_threshold": 5,
+             "rule_id": "R-TILT-01", "rule_name": "网箱倾斜橙色预警",
+             "rule_condition": "tilt_pitch > 5 且 wave_height > 1.5",
              "combine_condition": "AND(wave_height>1.5)",
-             "trigger_snapshot": {"tilt_pitch": 2.7, "tilt_roll": 1.9, "wave_height": 1.8, "ts": now - 26 * 60 * 1000},
+             "trigger_snapshot": {"tilt_pitch": 6.2, "tilt_roll": 2.4, "wave_height": 1.8, "ts": now - 26 * 60 * 1000},
              "handling_advice": "关注网箱姿态，检查配重",
              "handle_status": "handling", "confirm_status": "confirmed"},
             {"alarm_event_id": "ALM-0003", "alarm_type": "low_battery", "risk_level": "yellow",
@@ -431,6 +536,30 @@ class Platform(object):
         ]
 
     # ---------- 指令状态机 ----------
+    def cancel_command(self, command_id, reason="值班人手动停止"):
+        """手动停止一条还没走到终态的命令（组员反馈：投喂要能中途停）。
+
+        ⚠️ 只允许停「未到终态」的命令。
+        已经 success / failed / escalated 的不能改 —— 那是历史事实，不能篡改。
+        这正是这个平台「不允许静默失败」的另一面：**也不允许悄悄改历史**。
+        """
+        FINAL = ("success", "failed", "escalated", "cancelled")
+        for c in self.commands:
+            if c.get("command_id") != command_id:
+                continue
+            st = c.get("command_status")
+            if st in FINAL:
+                raise ValueError("命令已到终态（%s），不能再停止" % st)
+            now = int(time.time() * 1000)
+            c["command_status"] = "cancelled"
+            c["fail_reason"] = reason
+            c["history"].append({"ts": now, "status": "cancelled",
+                                 "note": "值班人手动停止"})
+            return {"ok": True, "command_id": command_id,
+                    "command_status": "cancelled",
+                    "stopped_at": now, "reason": reason}
+        raise ValueError("命令不存在：%s" % command_id)
+
     def send_command(self, device_id, command_type, params, inject=None):
         with self.lock:
             self._seq += 1
@@ -464,6 +593,12 @@ class Platform(object):
            超时的命令根本没收到回执，不可能出现 acknowledged / success。
            这里曾经写成"先走完整成功链再补失败链"，导致命令历史里
            同时存在 success 和 escalated —— 自相矛盾，答辩时会被问倒。
+
+        🔴 2026-10-07 加「手动停止」支持：
+           状态机跑在**独立线程**里，之前只往前进、不看命令当前状态 ——
+           结果 cancel_command 把状态改成 cancelled 之后，
+           这个线程睡醒照样把命令推到 success，**"手动停止"变成一句空话**。
+           现在每一步之前都检查一次，被停过就立刻收手。
         """
         if inject in ("offline", "timeout"):
             steps = ["created", "sent"]      # 发出去了，但等不到回执
@@ -471,8 +606,16 @@ class Platform(object):
             steps = ["created", "sent", "acknowledged", "success"]
 
         for st in steps:
-            time.sleep(0.7)
+            # 每步 1.4 秒（原 0.7）。
+            # 🔴 2026-10-07 改：0.7 秒时整条链 2.8 秒就跑完，**人手根本来不及点「停止」** ——
+            #    组员要的"手动停止"变成摆设。1.4 秒 × 4 步 = 5.6 秒，够看清状态流转，
+            #    也够点一下停止。这个值同时影响演示观感，改之前先想清楚。
+            time.sleep(1.4)
+            if cmd.get("command_status") == "cancelled":
+                return                        # 值班人已停止，不许再往前走
             self._set(cmd, st)
+            if cmd.get("command_status") == "cancelled":
+                return
             if st == "success":
                 cmd["receipt_result"] = {"success": True, "result": "executed",
                                          "actual_ts": int(time.time() * 1000), "error_code": None}
@@ -533,34 +676,85 @@ class Platform(object):
             })
 
     def feed_records(self):
-        r = _rng()
-        now = int(time.time() * 1000)
+        """投喂记录 —— **从真实命令派生，不再凭空生成**。
+
+        🔴 2026-10-07 改（组员反馈「投喂要能手动停止」时暴露的）：
+           原来这里用 _rng() 编了 9 条记录，命令号形如 cmd_20261005_0100。
+           界面上看不出问题，但一点「停止」就报「命令不存在」——
+           因为那些命令号**后端根本没有**。这就是"编数据"埋的雷：
+           静态看一眼没事，一交互就穿帮。
+
+           现在改成从 self.commands 里筛（设备=feeder_01 且类型=feed），
+           每一条都是真命令，都有真实状态机历史，都能被停止。
+           历史之所以不为空，是因为启动时预置了几条**真实存在**的命令（见 _seed_commands）。
+        """
         out = []
-        for i in range(8, -1, -1):
+        for c in self.commands:
+            if c.get("device_id") != "feeder_01" or c.get("command_type") != "feed":
+                continue
+            st = c.get("command_status")
             out.append({
-                "ts": now - i * 3 * 3600 * 1000,
-                "amount_kg": round(r.gauss(11.5, 2), 1),
-                "trigger_by": "manual" if i % 3 == 0 else "auto",
-                "task_status": "running" if i == 0 else "done",
-                "command_id": "cmd_20261005_%04d" % (100 - i),
+                "ts": c.get("created_ts") or (c.get("history") or [{}])[0].get("ts"),
+                "amount_kg": (c.get("params") or {}).get("amount_kg"),
+                "trigger_by": (c.get("params") or {}).get("trigger_by", "manual"),
+                "task_status": "done" if st in ("success", "failed", "escalated", "cancelled") else "running",
+                "command_id": c.get("command_id"),
+                "command_status": st,
             })
         return out
+
+    def _seed_commands(self):
+        """预置几条**真实存在**的历史命令。
+
+        为什么要预置：记录表现在从真实命令派生，不预置的话演示一开始是空表。
+        预置的是"过去几小时投喂过几次"这种事实，每条都在命令表里查得到、停得掉 ——
+        跟原来那种"编个号糊上去"有本质区别。
+        """
+        now = int(time.time() * 1000)
+        seed = [
+            (9, 11.2, "auto", "success"),
+            (6, 12.0, "auto", "success"),
+            (3, 10.5, "manual", "success"),
+            (1, 11.8, "auto", "success"),
+        ]
+        for hours_ago, kg, trigger, st in seed:
+            self._seq += 1
+            ts = now - hours_ago * 3600 * 1000
+            ymd = datetime.fromtimestamp(ts / 1000).strftime("%Y%m%d")
+            self.commands.append({
+                "command_id": "cmd_%s_%04d" % (ymd, self._seq),
+                "device_id": "feeder_01", "command_type": "feed",
+                "params": {"amount_kg": kg, "duration_s": 60, "trigger_by": trigger},
+                "timeout_ms": 5000, "max_retry": 3,
+                "command_status": st, "retry_count": 0, "fail_reason": None,
+                "created_ts": ts,
+                "history": [
+                    {"ts": ts, "status": "created"},
+                    {"ts": ts + 700, "status": "sent"},
+                    {"ts": ts + 1400, "status": "acknowledged"},
+                    {"ts": ts + 2100, "status": "success"},
+                ],
+                "receipt_result": {"success": True, "result": "executed",
+                                   "actual_ts": ts + 2100, "error_code": None},
+            })
+        self.commands.sort(key=lambda c: c.get("created_ts") or 0, reverse=True)
+
 
     def rule_check(self, row):
         """「一条竖线」用的水温判定 —— 与前端同口径"""
         if not row or row.get("water_temp") is None:
             return None
         t = row["water_temp"]
-        if t >= 21.5:
+        if t >= 28.0:
             return {"alarm_type": "tilt", "risk_level": "red", "trigger_field": "water_temp",
-                    "trigger_value": t, "trigger_threshold": 21.5,
+                    "trigger_value": t, "trigger_threshold": 28.0,
                     "rule_id": "R-TEMP-01", "rule_name": "水温上限告警",
-                    "rule_condition": "water_temp >= 21.5"}
-        if t >= 20.5:
+                    "rule_condition": "water_temp >= 28.0（大黄鱼高告警线，见鱼种温度库）"}
+        if t >= 25.5:
             return {"alarm_type": "tilt", "risk_level": "yellow", "trigger_field": "water_temp",
-                    "trigger_value": t, "trigger_threshold": 20.5,
+                    "trigger_value": t, "trigger_threshold": 25.5,
                     "rule_id": "R-TEMP-02", "rule_name": "水温偏高提示",
-                    "rule_condition": "water_temp >= 20.5"}
+                    "rule_condition": "water_temp >= 25.5（大黄鱼高提示线，见鱼种温度库）"}
         return None
 
 
@@ -650,7 +844,26 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"code": 200, "msg": "ok", "ts": int(time.time() * 1000)})
 
         if p == "/api/sites":
-            return self._json({"sites": SITES})
+            # ⚠️ 必须返回**裸数组**，不能包成 {"sites": [...]}。
+            # 前端 api-remote.js 判的是 Array.isArray(d)，包一层就永远取不到值 ——
+            # 症状是站点下拉框**一直是空的**，而且不报任何错，很难发现。
+            # （2026-10-06 踩过：加 /api/species 时顺手把这里包了一层，属于回归。）
+            out = []
+            for x in SITES:
+                y = dict(x)
+                if y.get("species"):
+                    t = temp_of(y["species"])
+                    if t:
+                        y["temp_warn_high"] = t.get("temp_warn_high")
+                        y["temp_alarm_high"] = t.get("temp_alarm_high")
+                        y["temp_warn_low"] = t.get("temp_warn_low")
+                        y["temp_alarm_low"] = t.get("temp_alarm_low")
+                        y["temp_opt"] = [t.get("temp_opt_low"), t.get("temp_opt_high")]
+                        y["temp_evidence"] = t.get("evidence")
+                        y["temp_source"] = t.get("source")
+                        y["temp_note"] = t.get("note")
+                out.append(y)
+            return self._json(out)
 
         # 鱼种体长体重参数库 —— 页面上要能看到「这个 a、b 是哪来的」
         if p == "/api/species":
@@ -665,13 +878,70 @@ class Handler(BaseHTTPRequestHandler):
                 "species": SPECIES_DB["species"],
             })
 
+        # 鱼种温度参数库 —— 水温告警阈值按站点养殖鱼种取值
+        if p == "/api/species/temp":
+            cn = one("species", "")
+            if cn:
+                row = TEMP_DB["by_cn"].get(cn)
+                return self._json({"species": row} if row else
+                                  {"error": "温度库里没有这个鱼种: %s" % cn})
+            return self._json({
+                "unit": "℃",
+                "count": len(TEMP_DB["species"]),
+                "note": "水温告警按网箱养殖鱼种取值，不用统一阈值",
+                "species": TEMP_DB["species"],
+            })
+
         if p == "/api/env":
             storm = one("storm", "0") in ("1", "true")
             heat = one("heat", "0") in ("1", "true")
             off = one("offline", "0") in ("1", "true")
             off_from = one("offline_from", "")
+
+            # 观测站点：返回 **NDBC 实测数据**（接口文档 8.2 的对外口径靠这里坐实）。
+            # 只在「没有造故障注入」时走真实数据 —— 造故障是对仿真的操作，
+            # 往真实数据里注入假故障会让「真实」两个字失效。
+            if not (storm or heat or off or off_from):
+                s = next((x for x in SITES if x["site_id"] == site), None)
+                if s and s.get("kind") == "obs":
+                    real = ndbc.as_env(s, minutes)
+                    if real:
+                        return self._json(real)
+
             return self._json(env_series(site, minutes, storm, heat,
                                          int(off_from) if off_from else None, off))
+
+        # ---------- 管理板块：养殖生产配置 ----------
+        if p == "/api/farm":
+            return self._json({
+                "summary": FARM.summary(),
+                "sites": FARM.farm_sites(),
+                "cages": FARM.all_cages(),
+                "devices": FARM.devices(),
+            })
+
+        if p == "/api/farm/ledger":
+            cid = one("cage_id", "")
+            rows = FARM.ledger_of(cid or None)
+            return self._json({
+                "cage_id": cid or None,
+                "count": len(rows),
+                "ledger": rows,
+                "summaries": [FARM.stock_summary(c["cage_id"]) for c in FARM.all_cages()],
+                "type_cn": farmmod.LEDGER_CN,
+            })
+
+        if p == "/api/farm/devices":
+            devs = FARM.devices()
+            return self._json({
+                "count": len(devs),
+                "devices": devs,
+                "summary": FARM.summary(),
+            })
+
+        # NDBC 直连：状态查询 + 显式拉取
+        if p == "/api/ndbc/status":
+            return self._json(ndbc.status())
 
         if p == "/api/fish":
             return self._json(fish_series(minutes))
@@ -680,7 +950,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"grid": heat_grid(), "resolution": "10x10"})
 
         if p == "/api/struct":
-            return self._json(struct_series(minutes))
+            # storm 透传：造故障「大风大浪」要能让网箱倾角真的抬起来，
+            # 否则倾角阈值改成 5°/15° 之后演示时永远触发不到（2026-10-06 踩过）
+            return self._json(struct_series(minutes, one("storm", "0") in ("1", "true")))
 
         if p == "/api/feed/decision":
             return self._json(feed_decision())
@@ -729,6 +1001,80 @@ class Handler(BaseHTTPRequestHandler):
             return self._err(400, "参数错误：请求体不是合法 JSON")
 
         try:
+            # ---------- 管理板块：写操作 ----------
+            # 手动停止未到终态的命令（组员反馈：投喂要能中途停）
+            m = re.match(r"^/api/commands/([\w\-]+)/cancel$", p)
+            if m:
+                try:
+                    return self._json(PLATFORM.cancel_command(m.group(1),
+                                                              body.get("reason")))
+                except ValueError as e:
+                    return self._err(400, str(e))
+
+            if p == "/api/farm/ledger":
+                cid = body.get("cage_id")
+                ltype = body.get("type")
+                cnt = body.get("count")
+                if not cid or not ltype or cnt is None:
+                    return self._err(400, "参数错误：缺少 cage_id / type / count")
+                try:
+                    return self._json(FARM.add_ledger(cid, ltype, cnt, body.get("note", ""),
+                                                      body.get("ts")))
+                except ValueError as e:
+                    return self._err(400, str(e))
+
+            if p == "/api/farm/cage/species":
+                cid = body.get("cage_id")
+                sp = body.get("species")
+                if not cid or not sp:
+                    return self._err(400, "参数错误：缺少 cage_id 或 species")
+                if not temp_of(sp):
+                    return self._err(400, "鱼种档案里没有「%s」—— 没有它的温度参数就不能养" % sp)
+                try:
+                    r = FARM.set_species(cid, sp)
+                    sync_sites_from_farm()      # 立刻生效，不用重启
+                except ValueError as e:
+                    return self._err(400, str(e))
+                t = temp_of(sp) or {}
+                return self._json({
+                    "ok": True, "cage_id": cid,
+                    "old_species": r["old_species"], "new_species": sp,
+                    "applied": {
+                        "temp_warn_high": t.get("temp_warn_high"),
+                        "temp_alarm_high": t.get("temp_alarm_high"),
+                        "temp_warn_low": t.get("temp_warn_low"),
+                        "temp_alarm_low": t.get("temp_alarm_low"),
+                        "temp_opt": [t.get("temp_opt_low"), t.get("temp_opt_high")],
+                    },
+                    "note": "全平台阈值已按新品种重算（水温告警线、体长体重参数等）",
+                })
+
+            if p == "/api/farm/calibrate":
+                did = body.get("device_id")
+                if not did:
+                    return self._err(400, "参数错误：缺少 device_id")
+                try:
+                    return self._json(FARM.calibrate(did, body.get("date"),
+                                                     body.get("institution"),
+                                                     body.get("cert_no")))
+                except ValueError as e:
+                    return self._err(400, str(e))
+
+            # 显式拉取 NDBC 最新数据并写本地缓存。
+            # **这是唯一的联网动作**，只在用户点「立即拉取最新」或启动时触发；
+            # 页面渲染永远只读本地缓存，所以断网也能演示。
+            if p == "/api/ndbc/refresh":
+                ids = body.get("stations") or None
+                if ids and not isinstance(ids, list):
+                    return self._err(400, "参数错误：stations 应为数组")
+                res = ndbc.refresh(ids)
+                return self._json({
+                    "results": res,
+                    "ok_count": sum(1 for r in res if r.get("ok")),
+                    "fail_count": sum(1 for r in res if not r.get("ok")),
+                    "status": ndbc.status(),
+                })
+
             if p == "/api/commands":
                 did = body.get("device_id")
                 ctype = body.get("command_type")
@@ -852,6 +1198,28 @@ def main():
         return 1
 
     load_species_db()          # 鱼种体长体重参数库（读不到会打警告并回落）
+    load_temp_db()             # 鱼种温度参数库（水温告警按鱼种取值）
+    sync_sites_from_farm()     # 以 farm.json 为准覆盖站点的养殖信息
+
+    # NDBC 缓存：**启动时后台尽力刷一次**，但绝阻塞启动、绝影响可用性。
+    # 为什么要"后台"：整个平台必须在断网时也能起来（R1 现场不能赌网络）。
+    # 所以这里是 daemon 线程 + 只在缓存过期时才拉；拉失败只记一行日志。
+    def _bg_ndbc_refresh():
+        try:
+            for st in ndbc.status().get("stations", []):
+                age = st.get("age_minutes")
+                if (not st.get("has_cache")) or (age is not None and age > 180):
+                    r = ndbc.refresh([st["station_id"]])
+                    for x in r:
+                        if x.get("ok"):
+                            print("  [NDBC] %s 已更新：%d 条，最新 %s UTC"
+                                  % (x["station_id"], x["count"], x.get("latest_ts_utc")))
+                        else:
+                            print("  [NDBC] %s 拉取失败（用本地缓存继续）：%s"
+                                  % (x["station_id"], x.get("error")))
+        except Exception as e:                              # noqa: BLE001
+            print("  [NDBC] 后台刷新异常（不影响使用）：%s" % e)
+    threading.Thread(target=_bg_ndbc_refresh, daemon=True).start()
 
     print("=" * 62)
     print("  深远海养殖与海洋牧场智能管控平台")

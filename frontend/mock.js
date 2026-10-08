@@ -13,10 +13,17 @@
 (function (global) {
   'use strict';
 
+  /* 曲线自动刷新的订阅表（对应 api-remote.js 里的 _seriesSubs）。
+     ⚠️ 这个声明曾经漏掉过一次：批量改代码的脚本按 `const M = {` 找锚点往里插，
+        但本文件里对象叫 `const API = {` —— 于是用到它的代码全在、声明却没有，
+        运行时报 MOCK_SERIES_SUBS is not defined（而且是每 3 秒报一次，刷满控制台）。
+        教训：**批量改代码时，锚点没匹配上必须报错，不能静默跳过。** */
+  const MOCK_SERIES_SUBS = [];
+
   /* ---------- 站点（接口文档 8.1） ---------- */
   const SITES = [
     { site_id: 'site_01', site_name: '模拟养殖站点',   kind: 'farm',   latitude: 26.10, longitude: 119.90, farming_depth_m: 20 },
-    { site_id: 'site_02', site_name: 'NDBC 观测站点 41001', kind: 'obs', latitude: 34.72, longitude: -72.27, farming_depth_m: 0 },
+    { site_id: 'site_02', site_name: 'NDBC 观测站点 42001', kind: 'obs', latitude: 25.92, longitude: -89.64, farming_depth_m: 0 },
     { site_id: 'site_03', site_name: 'NDBC 观测站点 46001', kind: 'obs', latitude: 56.30, longitude: -148.02, farming_depth_m: 0 },
     { site_id: 'site_04', site_name: 'NDBC 观测站点 51001', kind: 'obs', latitude: 24.45, longitude: -162.00, farming_depth_m: 0 }
   ];
@@ -51,16 +58,16 @@
       const diurnal = Math.sin((h - 6) / 24 * 2 * Math.PI);       // 昼夜变化
       const offline = offlineFrom != null && i >= offlineFrom;
 
-      const wave  = storm ? rndn(3.2, .5) : rndn(1.4, .25);
-      const wind  = storm ? rndn(17, 2.5) : rndn(8.3, 1.2);
+      const wave  = storm ? rndn(4.6, .55) : rndn(1.4, .25);
+      const wind  = storm ? rndn(19, 2.5) : rndn(8.3, 1.2);
       /* 造故障「水温骤升」：朝一个**绝对目标温度**爬，不是「在基线上加几度」。
          ⚠️ 为什么必须这样：水温基线带昼夜项 18.6 + sin((h-6)/24·2π)×1.8，
             夜里 22 点时 diurnal≈-0.87、基线只有 17.0℃ —— 加 4.2 也只到 21.4℃，
-            刚好差 0.1 够不到 21.5 的告警阈值。
+            刚好差 0.1 够不到告警阈值。2026-10-06 目标上调到 30.5℃ —— 水温告警改为按鱼种取值后，大黄鱼告警线是 28.0℃。
             结果就是「白天点造故障会报警、晚上点没反应」，现场答辩排在晚上就当场失败。 */
       const baseWater = 18.6 + diurnal * 1.8;
       const prog = heat ? Math.max(0, (i / n - 0.55) / 0.45) : 0;
-      const water = baseWater + (heat ? (23.5 - baseWater) * prog : 0) + rndn(0, .15);
+      const water = baseWater + (heat ? (30.5 - baseWater) * prog : 0) + rndn(0, .15);
       const air   = 22.4 + diurnal * 3.2 + rndn(0, .4) + (water - baseWater) * .6;
       const light = Math.max(0, (storm ? 4000 : 12000) * Math.max(0, Math.sin((h - 6) / 12 * Math.PI)) + rndn(0, 400));
 
@@ -154,20 +161,29 @@
       const day = Math.max(0, Math.sin((h - 6) / 12 * Math.PI));
 
       /* 姿态与张力：平时平稳，每 10 分钟来一次持续约 70 秒的「涌浪 / 阵风」事件。
-         为什么要这样建模：原来俯仰角是 gauss(2.4, .4) —— 长期骑在 2°/3° 阈值上，
+         为什么要这样建模：原来俯仰角是 gauss(2.4, .4) —— 长期骑在阈值上，
          噪声反复穿越阈值，一小时刷出上千条告警，界面上看着像系统坏了。
-         真实养殖场平时就是平稳的，异常是「事件」，不是常态。 */
+         真实养殖场平时就是平稳的，倾斜是「事件」，不是常态。
+
+         🔴 2026-10-06 改：阈值从 2°/3° 改为 5°/15° 后，原来的幅值（峰 ~3.4°）永远触不到。
+            同时把倾斜与「大风大浪」造故障**联动** —— 物理上说得通（海况差 → 网箱倾斜），
+            演示时也有明确路径：点「触发大风大浪」→ 倾角抬升 → 红色预警。 */
       const per = 120;                      // 120 个点 = 10 分钟
       const phase = i % per;
       let excursion = 0;
       if (phase < 14) {
-        const mag = (Math.floor(i / per) % 2 === 0) ? 2.2 : 1.3;
+        // mag 5.5 → 峰值约 6.7°，越过 5° 黄色线；台风级 15 → 峰值约 16°，越过 15° 红色线
+        // 平常幅值刻意压在 5° 提示线**下方**（峰 4.2° + 噪声 ≈ 4.9°），避免「狼来了」
+        const mag = storm ? 15.0 : ((Math.floor(i / per) % 2 === 0) ? 3.0 : 1.6);
         excursion = mag * Math.sin(phase / 14 * Math.PI);
       }
 
       const roll = 1.1 + excursion * 0.5 + rndn(0, .18);
       const pitch = 1.2 + excursion + rndn(0, .22);
-      const tension = 42.5 + excursion * 4.5 + rndn(0, 1.2);   // 海况差 → 张力跟着涨
+      /* 海况差 → 张力跟着涨（大浪对锚泊的载荷是非线性的，造故障时耦合更强）。
+         配着 designTension=60 kN 调：平常约 77% **不越 80% 黄线**（避免"狼来了"）；
+         造故障约 105%，越 95% 红线。 */
+      const tension = 37.5 + excursion * (storm ? 1.6 : 1.15) + rndn(0, 1.2);   // 海况差 → 张力跟着涨
       soc = Math.min(100, Math.max(8, soc + (day > .2 ? .18 : -.22) + rndn(0, .12)));
       out.push({
         ts: t0 + i * STEP_FAST,
@@ -333,10 +349,10 @@
       trigger_snapshot: { anchor_tension: 49.9, design_tension: 60, tension_pct: 83.2, ts: NOW - 8 * 60 * 1000 },
       handling_advice: '检查锚链受力，必要时降低流速影响', handle_status: 'pending', confirm_status: 'unconfirmed' },
     { alarm_event_id: 'ALM-0002', alarm_type: 'tilt', risk_level: 'orange', alarm_status: 'acknowledged',
-      alarm_ts: NOW - 26 * 60 * 1000, trigger_field: 'tilt_pitch', trigger_value: 2.7, trigger_threshold: 2,
-      rule_id: 'R-TILT-02', rule_name: '网箱倾斜橙色预警',
-      rule_condition: 'tilt_pitch > 2 且 wave_height > 1.5', combine_condition: 'AND(wave_height>1.5)',
-      trigger_snapshot: { tilt_pitch: 2.7, tilt_roll: 1.9, wave_height: 1.8, ts: NOW - 26 * 60 * 1000 },
+      alarm_ts: NOW - 26 * 60 * 1000, trigger_field: 'tilt_pitch', trigger_value: 6.2, trigger_threshold: 5,
+      rule_id: 'R-TILT-01', rule_name: '网箱倾斜橙色预警',
+      rule_condition: 'tilt_pitch > 5 且 wave_height > 1.5', combine_condition: 'AND(wave_height>1.5)',
+      trigger_snapshot: { tilt_pitch: 6.2, tilt_roll: 2.4, wave_height: 1.8, ts: NOW - 26 * 60 * 1000 },
       handling_advice: '关注网箱姿态，检查配重', handle_status: 'handling', confirm_status: 'confirmed' },
     { alarm_event_id: 'ALM-0003', alarm_type: 'low_battery', risk_level: 'yellow', alarm_status: 'recovered',
       alarm_ts: NOW - 55 * 60 * 1000, trigger_field: 'battery_soc', trigger_value: 19.4, trigger_threshold: 20,
@@ -358,6 +374,50 @@
        纯前端演示模式（后端没起）时这里返回空数组，页面会提示「需要后端」，
        而不是编一份假参数 —— 参数带文献出处，编出来就是学术不端。 */
     species: function () { return []; },
+    /* NDBC 直连同理：纯前端模式没有后端，拿不到浮标数据，返回 null 让页面提示。
+       绝不编造「浮标实测」数据 —— 那是最容易被戳穿的一类造假。 */
+    ndbcStatus: function () { return null; },
+    ndbcRefresh: function () {
+      return { ok: false, error: '纯前端演示模式没有后端，无法拉取 NDBC 数据' };
+    },
+    /* 管理板块同理：养殖生产配置住在后端（data/farm.json）。
+       纯前端模式拿不到，返回 null 让页面提示「需要后端」——
+       绝不在这里编一份假的网箱/台账数据，那会让"配置驱动"变成演戏。 */
+    farm: function () { return null; },
+    speciesTemp: function () { return null; },
+    farmLedger: function () { return null; },
+    farmDevices: function () { return null; },
+    setCageSpecies: function () {
+      return { ok: false, error: '纯前端演示模式没有后端，改不了网箱鱼种' };
+    },
+    addLedger: function () {
+      return { ok: false, error: '纯前端演示模式没有后端，记不了台账' };
+    },
+    calibrate: function () {
+      return { ok: false, error: '纯前端演示模式没有后端，记不了标定' };
+    },
+    reloadFarm: function () { return null; },
+    /* 纯前端模式没有真状态机，取消命令办不到 —— 明确报错，不假装成功 */
+    cancelCommand: function () {
+      return { ok: false, error: '纯前端演示模式没有后端，停不了命令' };
+    },
+
+    /* 曲线自动刷新 —— mock 模式的数据是本地现算的，定时重算就是"活的"。
+       与 api-remote.js 的 API.bind 行为保持一致，页面代码两边通用。 */
+    SERIES_REFRESH_MS: 3000,
+    onSeriesRefresh: function (fn) {
+      MOCK_SERIES_SUBS.push(fn);
+      return function () {
+        var i = MOCK_SERIES_SUBS.indexOf(fn);
+        if (i >= 0) MOCK_SERIES_SUBS.splice(i, 1);
+      };
+    },
+    /* 页面标准接法：订阅数据变化 + 定时重算曲线，返回一个取消函数 */
+    bind: function (vm, load) {
+      var s1 = API.subscribe(function () { vm.tick++; });
+      var s2 = API.onSeriesRefresh(function () { try { load.call(vm); } catch (e) {} });
+      return function () { s1(); s2(); };
+    },
     now: function () { return Date.now(); },
 
     env: function (siteId, minutes, opts) { return envSeries(siteId, minutes || 60, opts); },
@@ -379,17 +439,17 @@
     /* 「一条竖线」用的判定：水温越限 → 出告警 */
     ruleCheck: function (row) {
       if (!row || row.water_temp == null) return null;
-      if (row.water_temp >= 21.5) {
+      if (row.water_temp >= 28.0) {
         return { alarm_type: 'tilt', risk_level: 'red', trigger_field: 'water_temp',
-                 trigger_value: row.water_temp, trigger_threshold: 21.5,
+                 trigger_value: row.water_temp, trigger_threshold: 28.0,
                  rule_id: 'R-TEMP-01', rule_name: '水温上限告警',
-                 rule_condition: 'water_temp >= 21.5' };
+                 rule_condition: 'water_temp >= 28.0（大黄鱼高告警线）' };
       }
-      if (row.water_temp >= 20.5) {
+      if (row.water_temp >= 25.5) {
         return { alarm_type: 'tilt', risk_level: 'yellow', trigger_field: 'water_temp',
-                 trigger_value: row.water_temp, trigger_threshold: 20.5,
+                 trigger_value: row.water_temp, trigger_threshold: 25.5,
                  rule_id: 'R-TEMP-02', rule_name: '水温偏高提示',
-                 rule_condition: 'water_temp >= 20.5' };
+                 rule_condition: 'water_temp >= 25.5（大黄鱼高提示线）' };
       }
       return null;
     },
@@ -458,4 +518,12 @@
   };
 
   global.API = API;
+
+  /* 每 SERIES_REFRESH_MS 毫秒把所有订阅的页面重算一次曲线 */
+  setInterval(function () {
+    MOCK_SERIES_SUBS.slice().forEach(function (f) {
+      try { f(); } catch (e) { /* 单个页面异常不影响其他页面 */ }
+    });
+  }, API.SERIES_REFRESH_MS);
+
 })(window);

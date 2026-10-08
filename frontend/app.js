@@ -53,6 +53,16 @@
       { path: '/handle', label: '处置中心', ready: true },
       { path: '/trace',  label: '追溯查询', ready: true },
       { path: '/config', label: '参数配置', ready: true }
+    ]},
+    /* 管理板块 —— 养殖生产视角（场长用），与上面「参数配置」的技术参数视角区分开：
+         参数配置 = 阈值/规则（工程师改，很少动）
+         管理板块 = 哪个网箱养什么鱼、放了多少、设备标定到没到期（每批鱼都变）
+       这是「配置驱动」的落点：这里改了鱼种，全平台阈值跟着变。 */
+    { group: '管理', owner: '场长 / 运维', items: [
+      { path: '/mgmt/cages',       label: '网箱与站点',   ready: true },
+      { path: '/mgmt/species',     label: '鱼种档案',     ready: true },
+      { path: '/mgmt/ledger',      label: '存箱量台账',   ready: true },
+      { path: '/mgmt/calibration', label: '标定与维护',   ready: true }
     ]}
   ];
 
@@ -88,7 +98,10 @@
     { key: 'env',      label: '环境', first: '/env/sea' },
     { key: 'struct',   label: '结构安全', first: '/struct/alarm' },
     { key: 'ai',       label: '智能', first: '/ai/feed' },
-    { key: 'global',   label: '跨板块', first: '/alarm' }
+    { key: 'global',   label: '跨板块', first: '/alarm' },
+    /* 管理板块 —— 养殖生产视角（场长用）。
+       放在最后：它是配置类不是监控类。 */
+    { key: 'mgmt',     label: '管理', first: '/mgmt/cages' }
   ];
 
   const App = {
@@ -104,14 +117,33 @@
         if (p.indexOf('/env') === 0) return 'env';
         if (p.indexOf('/struct') === 0) return 'struct';
         if (p.indexOf('/ai') === 0) return 'ai';
+        if (p.indexOf('/mgmt') === 0) return 'mgmt';
         return 'global';
       },
-      /* 左侧菜单只显示当前板块 */
+      /* 左侧菜单只显示当前板块。
+         🔴 2026-10-06 改：`ready` 不再看菜单里的写死值，改成**按实际注册的路由自动判断** ——
+            只要某个组员的页面文件里注册了 PAGES['/fish/growth']，这一项就自动亮起来。
+            目的：组员加页面时**完全不用碰 app.js**（这是公共文件，多人改必冲突）。
+            菜单里 ready:false 的项仍然留着，作为「计划要做但还没做」的占位。 */
       sideGroups: function () {
         const k = this.tabKey;
         const want = { overview: '平台', fish: '鱼类', env: '环境',
-                       struct: '结构安全', ai: '智能', global: '跨板块' }[k];
-        return this.menu.filter(function (g) { return g.group === want; });
+                       struct: '结构安全', ai: '智能', global: '跨板块',
+                       mgmt: '管理' }[k];
+        /* ready 按**实际注册的路由**判断，不看菜单里的写死值 ——
+           这样组员只要注册了 PAGES['/fish/growth']，菜单项就自动从「·待建」变成可点。 */
+        const reg = window.PAGES || {};
+        return this.menu
+          .filter(function (g) { return g.group === want; })
+          .map(function (g) {
+            return {
+              group: g.group,
+              owner: g.owner,
+              items: g.items.map(function (it) {
+                return { path: it.path, label: it.label, ready: !!reg[it.path] };
+              })
+            };
+          });
       },
       /* 当前页面的组件 */
       page: function () {
@@ -187,6 +219,7 @@
   app.component('time-range', C.TimeRangePicker);
   app.component('command-flow', C.CommandFlow);
   app.component('page-head', C.PageHead);
+  app.component('help-dot', C.HelpDot);   /* 阈值依据：灰色问号 + 悬停看解释与出处 */
   app.mount('#app');
 
   window.ROUTER = Router;
