@@ -35,9 +35,9 @@
       { path: '/env/simulator', label: '环境仿真控制', ready: false }
     ]},
     { group: '结构安全', owner: '邓宇涵', items: [
+      { path: '/struct/overview', label: '结构安全总览', ready: false },
       { path: '/struct/alarm',  label: '灾害分级预警', ready: true },
       { path: '/struct/energy', label: '能源保障', ready: true },
-      { path: '/struct/overview', label: '结构安全总览', ready: false },
       { path: '/struct/detail', label: '监测详情', ready: false },
       { path: '/struct/rules',  label: '规则配置', ready: false },
       { path: '/struct/fault',  label: '造故障工具', ready: false }
@@ -96,7 +96,7 @@
     { key: 'overview', label: '总览', first: '/overview' },
     { key: 'fish',     label: '鱼类', first: '/fish/monitor' },
     { key: 'env',      label: '环境', first: '/env/sea' },
-    { key: 'struct',   label: '结构安全', first: '/struct/alarm' },
+    { key: 'struct',   label: '结构安全', first: '/struct/overview' },
     { key: 'ai',       label: '智能', first: '/ai/feed' },
     { key: 'global',   label: '跨板块', first: '/alarm' },
     /* 管理板块 —— 养殖生产视角（场长用）。

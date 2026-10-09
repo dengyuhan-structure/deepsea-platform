@@ -39,7 +39,7 @@
         /* 2026-10-07 按组员反馈新增：
              mode   —— 自动/手动模式切换。自动=按系统算的规则投喂；手动=自己填量
              amount —— 手工投喂量。null 表示"还没填过"，界面上回落显示建议值 */
-        mode: 'auto', amount: null, stopMsg: ''
+        mode: 'auto', amount: null, stopMsg: '', showSteps: false
       };
     },
     computed: {
@@ -130,6 +130,15 @@
       this.unsub = API.bind(this, this.load);
     },
     beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    /* 2026-10-08 按《智能板块建议10.7》问题①：手动投喂默认填建议量。
+       切到手动模式时若还没填过，直接给建议值，值班人在此基础上改即可。 */
+    watch: {
+      mode: function (v) {
+        if (v === 'manual' && this.amount === null && this.dec && this.dec.suggest_kg_h != null) {
+          this.amount = this.dec.suggest_kg_h;
+        }
+      }
+    },
     template: [
       '<div>',
       '  <page-head title="智能 · 自动投喂"',
@@ -167,8 +176,9 @@
       '            <a href="#/alarm">去告警中心看 →</a>',
       '            <div class="small" style="margin-top:4px">「不允许静默失败」：命令发出去没回执，必须报警，绝不许悄悄过去。</div>',
       '          </div>',
-      '          <div class="small muted" style="margin-top:10px">状态变更时间线</div>',
-      '          <div class="events">',
+      '          <div class="small muted" style="margin-top:10px;cursor:pointer" @click="showSteps = !showSteps">',
+      '            状态变更时间线 {{ showSteps ? \'▾\' : \'▸\' }}</div>',
+      '          <div v-if="showSteps" class="events">',
       '            <div v-for="(s, i) in steps" :key="i" class="row-item" style="cursor:default">',
       '              <span class="t">{{ s.t }}</span><span class="d">{{ statusCn(s.s) }}</span>',
       '            </div>',
@@ -189,7 +199,9 @@
       '        <div v-if="mode === \'manual\'" class="row" style="gap:8px;align-items:center;margin-top:10px">',
       '          <span class="small muted">投喂量</span>',
       '          <input type="number" step="0.1" v-model.number="amount"',
-      '                 :placeholder="\'建议 \' + dec.suggest_kg_h" style="width:110px">',
+      '                 :placeholder="\'建议 \' + dec.suggest_kg_h"',
+      '                 style="width:110px;border:1.5px solid #2F5496;background:#EEF2FA" title="可修改投喂量">',
+      '          <span class="small" style="color:#2F5496">可修改</span>',
       '          <span class="small">kg/h</span>',
       '          <button @click="useSuggest">用建议值（{{ dec.suggest_kg_h }}）</button>',
       '        </div>',
@@ -206,7 +218,7 @@
       '            · {{ runningCount }} 条正在执行</span>',
       '        </div>',
       '        <div v-if="stopMsg" class="hint small" style="margin-bottom:8px">{{ stopMsg }}</div>',
-      '        <div class="dt-wrap" style="max-height:300px">',
+      '        <div class="dt-wrap" style="max-height:420px">',
       '          <table class="dt">',
       '            <thead><tr><th>时间</th><th>投喂量 (kg)</th><th>触发来源</th><th>任务状态</th><th>命令号</th><th></th></tr></thead>',
       '            <tbody>',
@@ -399,7 +411,7 @@
       '      <div class="small muted" style="margin-top:12px">',
       '        补光历史<span v-if="commands.length">（{{ commands.length }} 条）</span>',
       '      </div>',
-      '      <div class="events" style="max-height:320px;overflow:auto">',
+      '      <div class="events" style="max-height:400px;overflow:auto">',
       '        <div v-for="c in commands" :key="c.command_id" class="row-item" style="cursor:default">',
       '          <span class="t">{{ cmdTime(c) }}</span>',
       '          <span class="d">',
@@ -442,8 +454,9 @@
       '    <time-range v-model="minutes" />',
       '    <span style="width:12px"></span>',
       '    <span class="small muted">手动设定调光档位</span>',
-      '    <input type="range" min="0" max="100" step="5" v-model.number="dimming" style="width:180px"',
-      '           class="editable">',
+      '    <input type="range" min="0" max="100" step="5" v-model.number="dimming"',
+      '           style="width:180px;accent-color:#2F5496" title="可修改调光档位">',
+      '    <span class="small" style="color:#2F5496">可修改</span>',
       '    <b>{{ dimming }} %</b>',
       '    <!-- 组员反馈：只给百分比不直观 —— 补上档位名与相对光强 -->',
       '    <span class="small" style="color:#2F5496">',
@@ -466,6 +479,217 @@
       '        <button class="primary" @click="confirm">确认下发</button>',
       '      </div>',
       '    </div>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
+  /* ============================================================
+     /ai/devices —— 设备状态页
+     左侧菜单「设备状态」对应这一页（app.js 自动发现，无需改骨架）。
+     展示智能板块涉及的养殖设备实时状态：
+       在线 / 运行状态 / 站点 / 运行参数 / 最近命令
+     数据一律走 API.devices() / API.commands()（已有真实接口，不编），
+     API.bind 保证数据变化 + 每 3 秒自动刷新。
+     ============================================================ */
+  PAGES['/ai/devices'] = {
+    data: function () {
+      return { tick: 0, unsub: null };
+    },
+    computed: {
+      /* ⚠️ 显式读 this.tick：API 轮询刷新 _devices/_cmds 时靠 tick 驱动重算 */
+      devices: function () { this.tick; return API.devices(); },
+      commands: function () { this.tick; return API.commands(); },
+      onlineCount: function () {
+        return this.devices.filter(function (d) { return d.device_online; }).length;
+      }
+    },
+    methods: {
+      /* API.bind 定时会调 load —— 用 tick++ 触发 computed 重算（数据读缓存即可） */
+      load: function () { this.tick++; },
+      /* 该设备最近一条命令（commands 按时间倒序，第一条最新） */
+      latestCmd: function (devId) {
+        const c = this.commands.filter(function (x) { return x.device_id === devId; })[0];
+        return c || null;
+      },
+      statusCn: function (s) {
+        return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
+                 timeout: '超时', retrying: '重试中', failed: '失败', escalated: '升级报警',
+                 cancelled: '已停止' }[s] || s;
+      },
+      time: function (ts) { return ts ? new Date(ts).toLocaleString('zh-CN', { hour12: false }) : '—'; },
+      /* 按设备类型给出该设备最要紧的运行参数（不编，拿不到就显示 —） */
+      paramText: function (d) {
+        const p = d.device_params || {};
+        if (d.device_type === 'feeder') {
+          return p.feed_remain_pct != null ? '饵料剩余 ' + p.feed_remain_pct + ' %' : '—';
+        }
+        if (d.device_type === 'light') {
+          return p.light_dimming_pct != null ? '调光档位 ' + p.light_dimming_pct + ' %' : '—';
+        }
+        return '—';
+      },
+      lastCmdSummary: function (devId) {
+        const c = this.latestCmd(devId);
+        if (!c) return '还没有下发过命令';
+        return '最近 ' + CN.commandType(c.command_type) + ' · ' + this.statusCn(c.command_status) +
+               (c.fail_reason ? ' · ' + c.fail_reason : '');
+      }
+    },
+    mounted: function () {
+      const self = this;
+      this.unsub = API.bind(this, this.load);
+    },
+    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    template: [
+      '<div>',
+      '  <page-head title="设备状态"',
+      '    desc="智能板块涉及的养殖设备实时状态 —— 数据走 API.devices()，每 3 秒自动刷新"',
+      '    :sources="[\'simulated\']" />',
+      '',
+      '  <div class="hint" style="margin-bottom:12px">',
+      '    <b>{{ onlineCount }} / {{ devices.length }}</b> 台设备在线。',
+      '    <span class="small muted">设备离线或故障时，下发给它的命令会走失败链并进告警中心（R-CMD-01）。</span>',
+      '  </div>',
+      '',
+      '  <div v-if="devices.length" class="grid-stats">',
+      '    <div v-for="d in devices" :key="d.device_id" class="card" style="min-width:0">',
+      '      <div class="card-title">',
+      '        {{ CN.deviceType(d.device_type) }}<span class="small muted"> · {{ d.device_id }}</span>',
+      '      </div>',
+      '      <div class="kv" style="margin-top:6px">',
+      '        <span class="k">在线</span><span>{{ d.device_online ? \'在线\' : \'离线\' }}</span>',
+      '        <span class="k">运行状态</span><span>{{ CN.deviceState(d.device_state) }}</span>',
+      '        <span class="k">站点</span><span class="mono">{{ d.site_id }}</span>',
+      '        <span class="k">运行参数</span><span>{{ paramText(d) }}</span>',
+      '        <span class="k">最近命令</span><span>{{ lastCmdSummary(d.device_id) }}</span>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
+      '  <div v-if="!devices.length" class="todo">还没有设备数据</div>',
+      '',
+      '  <div class="card" style="margin-top:12px">',
+      '    <div class="card-title">造故障（验证闭环用）</div>',
+      '    <div class="small muted">',
+      '      到「自动投喂」页的造故障里，选「设备离线 / 命令超时」，',
+      '      再下发命令 —— 本页会实时看到设备状态与该设备命令的失败 / 报警。',
+      '    </div>',
+      '  </div>',
+      '</div>'
+    ].join('\n')
+  };
+  /* ============================================================
+     /ai/commands —— 指令日志页
+     左侧菜单「指令日志」对应这一页（app.js 自动发现，无需改骨架）。
+     展示全部指令的全生命周期：
+       下发时间 / 命令号 / 设备 / 类型 / 目标参数 / 状态 / 已重试 / 失败原因
+     每行可展开查看全链路时间线（history）与设备回执。
+     数据一律走 API.commands() / API.devices()（已有真实接口，不编），
+     API.bind 保证数据变化 + 每 3 秒自动刷新。
+     ============================================================ */
+  PAGES['/ai/commands'] = {
+    data: function () {
+      return { tick: 0, expandId: null, unsub: null };
+    },
+    computed: {
+      /* ⚠️ 显式读 this.tick：API 轮询刷新 _cmds/_devices 时靠 tick 驱动重算 */
+      commands: function () { this.tick; return API.commands(); },
+      devices: function () { this.tick; return API.devices(); }
+    },
+    methods: {
+      load: function () { this.tick++; },
+      statusCn: function (s) {
+        return { created: '已创建', sent: '已发出', acknowledged: '已收到回执', success: '成功',
+                 timeout: '超时', retrying: '重试中', failed: '失败', escalated: '升级报警',
+                 cancelled: '已停止' }[s] || s;
+      },
+      time: function (ts) { return ts ? new Date(ts).toLocaleString('zh-CN', { hour12: false }) : '—'; },
+      /* 设备中文名：从 API.devices() 反查 device_type 再经 CN 转中文（不裸英文） */
+      deviceName: function (devId) {
+        const d = this.devices.filter(function (x) { return x.device_id === devId; })[0];
+        return (d ? CN.deviceType(d.device_type) + ' · ' : '') + devId;
+      },
+      /* 按命令类型给出目标参数（不编，拿不到就显示 —） */
+      targetText: function (c) {
+        const p = c.params || {};
+        if (c.command_type === 'feed') {
+          return (p.amount_kg != null ? p.amount_kg + ' kg/h' : '—') +
+                 (p.duration_s != null ? ' · ' + p.duration_s + ' s' : '');
+        }
+        if (c.command_type === 'light') {
+          return p.light_dimming_pct != null ? p.light_dimming_pct + ' %' : '—';
+        }
+        return '—';
+      },
+      statusColor: function (c) {
+        if (c.command_status === 'success') return '#166534';
+        if (c.command_status === 'cancelled') return '#6B7280';
+        return c.fail_reason ? '#991B1B' : '#6B7280';
+      },
+      /* 展开 / 收起某条命令的全链路时间线 */
+      toggle: function (id) { this.expandId = this.expandId === id ? null : id; }
+    },
+    mounted: function () {
+      const self = this;
+      this.unsub = API.bind(this, this.load);
+    },
+    beforeUnmount: function () { if (this.unsub) this.unsub(); },
+    template: [
+      '<div>',
+      '  <page-head title="指令日志"',
+      '    desc="智能板块全部指令的下发记录与全链路状态 —— 数据走 API.commands()，每 3 秒自动刷新"',
+      '    :sources="[\'simulated\']" />',
+      '',
+      '  <div class="card">',
+      '    <div class="card-title">全部指令（{{ commands.length }} 条）',
+      '      <span class="small muted">按下发时间倒序；点「全链路」看单条命令的生命周期与回执</span>',
+      '    </div>',
+      '    <div v-if="!commands.length" class="todo">还没有下发过命令',
+      '      <span class="small">—— 到「自动投喂」或「智能补光」页下发一条试试。</span>',
+      '    </div>',
+      '    <div v-else class="dt-wrap" style="max-height:560px">',
+      '      <table class="dt">',
+      '        <thead><tr><th>下发时间</th><th>命令号</th><th>设备</th><th>类型</th><th>目标参数</th><th>状态</th><th>已重试</th><th>失败原因</th><th></th></tr></thead>',
+      '        <tbody>',
+      '          <template v-for="c in commands" :key="c.command_id">',
+      '            <tr>',
+      '              <td class="small">{{ time(c.ts) }}</td>',
+      '              <td class="mono">{{ c.command_id }}</td>',
+      '              <td>{{ deviceName(c.device_id) }}</td>',
+      '              <td>{{ CN.commandType(c.command_type) }}</td>',
+      '              <td>{{ targetText(c) }}</td>',
+      '              <td :style="{ color: statusColor(c) }">{{ statusCn(c.command_status) }}</td>',
+      '              <td>{{ c.retry_count }} / {{ c.max_retry }}</td>',
+      '              <td :style="{ color: c.fail_reason ? \'#991B1B\' : \'#6B7280\' }">{{ c.fail_reason || \'—\' }}</td>',
+      '              <td style="white-space:nowrap">',
+      '                <button @click="toggle(c.command_id)">{{ expandId === c.command_id ? \'收起\' : \'全链路\' }}</button>',
+      '              </td>',
+      '            </tr>',
+      '            <tr v-if="expandId === c.command_id">',
+      '              <td colspan="9" style="background:#F8FAFC;padding:10px 14px">',
+      '                <div class="small muted" style="margin-bottom:6px">',
+      '                  全链路时间线（{{ c.history.length }} 步）· 超时 {{ c.timeout_ms }} ms / 最多重试 {{ c.max_retry }} 次',
+      '                </div>',
+      '                <div class="events">',
+      '                  <div v-for="(h, i) in c.history" :key="i" class="row-item" style="cursor:default">',
+      '                    <span class="t">{{ time(h.ts) }}</span><span class="d">{{ statusCn(h.status) }}</span>',
+      '                  </div>',
+      '                  <div v-if="!c.history.length" class="empty">暂无状态记录</div>',
+      '                </div>',
+      '                <div v-if="c.receipt_result" class="small" style="margin-top:8px;color:#166534">',
+      '                  回执：<b>设备已执行</b>',
+      '                  <span class="muted">（error_code={{ c.receipt_result.error_code == null ? \'无\' : c.receipt_result.error_code }}）</span>',
+      '                </div>',
+      '              </td>',
+      '            </tr>',
+      '          </template>',
+      '        </tbody>',
+      '      </table>',
+      '    </div>',
+      '  </div>',
+      '',
+      '  <div class="hint small" style="margin-top:12px">',
+      '    <b>为什么有「失败原因」这一列</b>：命令发出去没回执，必须报警，绝不许悄悄过去（R-CMD-01）。',
+      '    失败的命令可以点「全链路」看它走到哪一步才失败、重试了几次。',
       '  </div>',
       '</div>'
     ].join('\n')

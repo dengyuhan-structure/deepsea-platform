@@ -25,7 +25,7 @@
         {
           "cage_id": "cage_01",
           "cage_name": "1 号网箱",
-          "species": "罗非鱼",
+          "species": "大黄鱼",
           "spec": {
             "shape": "圆形",
             "circumference_m": 60,

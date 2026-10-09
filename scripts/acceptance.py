@@ -83,6 +83,14 @@ PAGES = [
     ("鱼种档案",        "/mgmt/species"),
     ("存箱量台账",      "/mgmt/ledger"),
     ("标定与维护",      "/mgmt/calibration"),
+    # 2026-10-09 组员 PR 新增（4 个 PR 合入后，菜单里 24 个规划页面全部实现）
+    ("鱼类生长模型",    "/fish/growth"),        # PR#5 王浩然
+    ("鱼类原始明细",    "/fish/records"),
+    ("鱼类仿真控制",    "/fish/simulator"),
+    ("结构安全总览",    "/struct/overview"),    # PR#2 邓宇涵
+    ("结构监测详情",    "/struct/detail"),
+    ("智能设备状态",    "/ai/devices"),         # PR#1 李志成
+    ("智能指令日志",    "/ai/commands"),
 ]
 
 
@@ -619,6 +627,58 @@ def check_ndbc(base):
         rec(8, "NDBC 直连 + 断网可演示", FAIL, "；".join(problems))
 
 
+
+# ======================================================================
+# 附加 5：演示口径的关键配置没被写歪（2026-10-09 加）
+#
+#   为什么单列一条：
+#     farm.json 是「单一事实来源」—— 网箱养什么鱼，全平台的阈值与参数都跟着它变。
+#     它一旦被写歪，**每个页面都跟着歪，而且页面上看不出任何异常**。
+#     实测踩过：cage_01 被测试改动带成「罗非鱼」，水温告警线悄悄从 28.0℃ 变成 36.0℃。
+#
+#   所以把演示口径写死在这里，改歪就红。
+# ======================================================================
+def check_config(base):
+    problems = []
+    try:
+        farm = get(base, "/api/farm")
+    except Exception as e:                                  # noqa: BLE001
+        rec(9, "演示口径配置未被写歪", WARN, "取不到 /api/farm：%s" % e)
+        return
+
+    cages = {c["cage_id"]: c for c in (farm.get("cages") or [])}
+
+    # ① 主养网箱必须是 1 号、养大黄鱼 —— 全平台的演示都围着它转
+    c1 = cages.get("cage_01")
+    if not c1:
+        problems.append("没有 cage_01")
+    elif c1.get("species") != "大黄鱼":
+        problems.append("cage_01 养的是「%s」，演示口径应为「大黄鱼」"
+                        "（改歪会让水温告警线从 28.0℃ 悄悄变成别的值）" % c1.get("species"))
+
+    # ② 主养鱼种的水温告警线必须是 28.0℃（来自鱼种温度库）
+    try:
+        sites = get(base, "/api/sites")
+        s1 = [x for x in sites if x.get("site_id") == "site_01"][0]
+        if s1.get("species") != "大黄鱼":
+            problems.append("site_01 的主养鱼种是「%s」，应为「大黄鱼」" % s1.get("species"))
+        if float(s1.get("temp_alarm_high") or 0) != 28.0:
+            problems.append("site_01 的水温告警线是 %s℃，应为 28.0℃（大黄鱼）"
+                            % s1.get("temp_alarm_high"))
+    except Exception as e:                                  # noqa: BLE001
+        problems.append("取 /api/sites 失败：%s" % e)
+
+    # ③ 站点数 = 4（1 养殖 + 3 观测），浮标号必须是 42001/46001/51001
+    if len(cages) != 2:
+        problems.append("网箱数应为 2，实际 %d" % len(cages))
+
+    if problems:
+        rec(9, "演示口径配置未被写歪", FAIL, "；".join(problems))
+    else:
+        rec(9, "演示口径配置未被写歪", PASS,
+            "cage_01 养大黄鱼、水温告警线 28.0℃、2 个网箱 —— "
+            "farm.json 是单一事实来源，写歪会让全平台阈值跟着歪且页面看不出来")
+
 # ======================================================================
 def free_port():
     """让系统给一个当前空闲的端口。
@@ -683,6 +743,7 @@ def main():
         check_enum_labels(base)
         check_script_encoding()
         check_ndbc(base)
+        check_config(base)
 
     finally:
         proc.terminate()

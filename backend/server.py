@@ -57,6 +57,12 @@ import ndbc                                                  # noqa: E402
 # 养殖生产配置（管理板块）：网箱养什么鱼、存箱量台账、设备标定
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import farm as farmmod                                       # noqa: E402
+
+# 环境板块扩展接口（刘伟豪的 backend/api/env.py）
+#   ⚠️ 他没覆盖 /api/env 主接口 —— 只加了 4 条扩展路由（历史查询 / 覆盖范围 /
+#      风暴细化 / 仿真控制），所以跟我们现有的 env_series 不冲突。
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "api"))
+import env as envapi                                         # noqa: E402
 FARM = farmmod.Farm()
 
 # ----------------------------------------------------------------------
@@ -327,6 +333,100 @@ def env_series(site_id, minutes=60, storm=False, heat=False, offline_from=None, 
     return {"fast": fast, "slow": slow}
 
 
+# ----------------------------------------------------------------------
+# 鱼类仿真状态（接口文档 7.10）：两条轴互相独立
+#   · gen_status（运行状态）：running / paused / stopped
+#   · sim_mode  （内容模式）：正常 + 摄食异常 / 鱼群聚集 / 密度骤降 / 摄像头离线
+# 鱼类各页面（监测/热力图/生长/明细）都读这里，切一次场景、四页同步。
+# ----------------------------------------------------------------------
+FISH_MODE_CN = {
+    "normal": "正常",
+    "feeding_abnormal": "摄食异常",
+    "cluster": "鱼群聚集",
+    "density_drop": "密度骤降/分散",
+    "camera_off": "摄像头离线",
+}
+FISH_GEN_CN = {"running": "运行中", "paused": "已暂停", "stopped": "已停止"}
+FISH_ACTION_CN = {"start": "启动", "pause": "暂停", "resume": "恢复", "stop": "停止"}
+
+FISH_SIM = {
+    "gen_status": "running",
+    "sim_mode": "normal",
+    "updated_ts": int(time.time() * 1000),
+    "log": [],
+}
+FISH_SIM_LOCK = threading.Lock()
+
+
+def _fish_sim_state_locked():
+    """状态快照（调用方已持锁）。"""
+    return {
+        "gen_status": FISH_SIM["gen_status"],
+        "sim_mode": FISH_SIM["sim_mode"],
+        "updated_ts": FISH_SIM["updated_ts"],
+        "gen_status_cn": FISH_GEN_CN[FISH_SIM["gen_status"]],
+        "sim_mode_cn": FISH_MODE_CN[FISH_SIM["sim_mode"]],
+        "log": [dict(x) for x in FISH_SIM["log"]],
+    }
+
+
+def fish_sim_state():
+    """鱼类仿真当前状态（含中文标签与操作日志）。"""
+    with FISH_SIM_LOCK:
+        return _fish_sim_state_locked()
+
+
+def fish_sim_control(action=None, mode=None):
+    """控制鱼类仿真器：action 管生成器，mode 管内容；两条轴均可单独设置。"""
+    with FISH_SIM_LOCK:
+        now = int(time.time() * 1000)
+        if action:
+            if action not in FISH_ACTION_CN:
+                raise ValueError("action 不合法：%s（可选 start/pause/resume/stop）" % action)
+            FISH_SIM["gen_status"] = ("running" if action in ("start", "resume")
+                                      else ("paused" if action == "pause" else "stopped"))
+            FISH_SIM["log"].insert(0, {"ts": now, "action": action,
+                                       "action_cn": FISH_ACTION_CN[action],
+                                       "target": "生成器"})
+        if mode:
+            if mode not in FISH_MODE_CN:
+                raise ValueError("sim_mode 不合法：%s（可选 %s）"
+                                 % (mode, "、".join(sorted(FISH_MODE_CN))))
+            FISH_SIM["sim_mode"] = mode
+            FISH_SIM["log"].insert(0, {"ts": now, "action": "mode",
+                                       "action_cn": "切换场景",
+                                       "target": FISH_MODE_CN[mode]})
+        FISH_SIM["updated_ts"] = now
+        FISH_SIM["log"] = FISH_SIM["log"][:30]
+        return _fish_sim_state_locked()
+
+
+def planned_weight(cage, ts_ms):
+    """计划生长曲线在 ts_ms（毫秒）处的体重：放养日·初始规格 → 计划起捕日·目标规格，线性插值。
+
+    为什么用线性、不用 von Bertalanffy：后者要文献生长参数，我们没有就不能编；
+    线性只需台账里已有的 4 个真实值（放养/起捕日期、初始/目标规格），口径可追溯。
+    任一配置缺失（或缺生长计划）返回 None，调用方**不许编一条假曲线**。
+    """
+    if not cage:
+        return None
+    st = cage.get("stocking") or {}
+    try:
+        t0 = datetime.strptime(st["date"], "%Y-%m-%d").timestamp() * 1000
+        t1 = datetime.strptime(st["plan_harvest"], "%Y-%m-%d").timestamp() * 1000
+        w0 = float(st["init_size_g"])
+        w1 = float(st["target_size_g"])
+    except (KeyError, ValueError, TypeError):
+        return None
+    if t1 <= t0:
+        return None
+    if ts_ms <= t0:
+        return w0
+    if ts_ms >= t1:
+        return w1
+    return w0 + (w1 - w0) * (ts_ms - t0) / (t1 - t0)
+
+
 def fish_series(minutes=60):
     """鱼类（接口文档 第三节；4 项指标本期不做）"""
     n = max(2, int(minutes * 60 * 1000 / STEP_FAST))
@@ -342,36 +442,91 @@ def fish_series(minutes=60):
         # 参数库缺失时的兜底。**必须标注出来**，不许当成正常值用。
         a, b = 0.00891, 3.06
         lwr = {"a": a, "b": b, "source": "参数库缺失，用大黄鱼默认值", "url": ""}
-    out, count = [], site.get("stock_init_count", 1200)
+    # 主网箱的生长计划：当前体重以计划曲线为准，不再恒为初始规格
+    # （否则已养 181 天体重还是 420g，生长页会"预测"出 2040 年上市）
+    cage = FARM.cage(site.get("cage_id", "cage_01"))
+    sim = fish_sim_state()
+    gen, mode = sim["gen_status"], sim["sim_mode"]
+    # 视觉链路不可用：生成器停止 / 摄像头离线 → 全部指标置空
+    offline = gen == "stopped" or mode == "camera_off"
+    # 暂停：数据冻结在计划值上，不再产生新波动
+    frozen = gen == "paused"
+    base_count = site.get("stock_init_count", 1200)
+    count = base_count
+    out = []
     for i in range(n):
-        count += round(r.gauss(0, .6))
-        avg_w = site.get("stock_init_size_g", 420) + i / n * 6 + r.gauss(0, 3)
+        ts = t0 + i * STEP_FAST
+        if offline:
+            # 离线给 null、质量 stale，不给上一个值（通用规范 4.2 硬纪律）
+            out.append({
+                "ts": ts, "site_id": "site_01", "source": "simulated",
+                "quality": "stale", "fish_count": None, "fish_density": None,
+                "avg_length_cm": None, "avg_weight_g": None,
+                "total_biomass_kg": None, "feeding_intensity": None,
+            })
+            continue
+        # 密度骤降/分散：窗口内现存尾数与密度渐降约 35%
+        if mode == "density_drop":
+            count = round(base_count * (1 - 0.35 * i / n))
+        elif not frozen:
+            count += round(r.gauss(0, .6))
+        pw = planned_weight(cage, ts)
+        if pw is None:
+            # 生长计划缺失时保留旧兜底，**不编造曲线**
+            avg_w = site.get("stock_init_size_g", 420) + (0 if frozen else r.gauss(0, 3))
+        else:
+            avg_w = pw + (0 if frozen else r.gauss(0, 1.5))
+        if frozen:
+            feed = "none"
+        elif mode == "feeding_abnormal":
+            # 摄食异常：长时间无摄食、偶发骤增（无→中/强频繁跳变）
+            feed = "none" if r.random() < 0.7 else r.choice(["mid", "strong"])
+        else:
+            feed = "weak" if r.random() < .15 else r.choice(["mid", "strong"])
+        # 聚集主要反映在热力图；总密度小幅上浮
+        dens_scale = 1.08 if mode == "cluster" else 1.0
+        quality = "suspect" if mode in ("feeding_abnormal", "density_drop") else "good"
         out.append({
-            "ts": t0 + i * STEP_FAST,
+            "ts": ts,
             "site_id": "site_01",
-            "source": "public",
-            "quality": "good",
+            "source": "simulated",
+            "quality": quality,
             "fish_count": count,
-            "fish_density": round(count / 285, 1),
+            "fish_density": round(count / 285 * dens_scale, 1),
             # 由体重反推体长：W = a·L^b  →  L = (W/a)^(1/b)
             # a、b 来自鱼种参数库（带文献出处），不再硬编码
             "avg_length_cm": round((avg_w / a) ** (1.0 / b), 1),
             "avg_weight_g": round(avg_w, 1),
             "total_biomass_kg": round(count * avg_w / 1000, 1),
-            "feeding_intensity": r.choice(["none", "weak", "mid", "strong"]),
+            "feeding_intensity": feed,
         })
     return out
 
 
 def heat_grid():
-    """10×10 网格（拍板问题单 问题 5 建议 A）"""
+    """10×10 鱼群密度网格（拍板问题单 问题 5 建议 A）。
+
+    随鱼类仿真场景变化：鱼群聚集 → 局部出现高密度区；密度骤降 → 整体下调；
+    生成器停止 / 摄像头离线 → 返回 None（视觉链路不可用，不编数据）。
+    """
+    sim = fish_sim_state()
+    gen, mode = sim["gen_status"], sim["sim_mode"]
+    if gen == "stopped" or mode == "camera_off":
+        return None
     r = _rng()
     g = []
     for y in range(10):
         row = []
         for x in range(10):
             d = math.hypot(x - 4.5, y - 5.2)
-            row.append(round(max(0.0, 12 - d * 2.2 + r.gauss(0, 1.4)), 1))
+            v = max(0.0, 12 - d * 2.2 + r.gauss(0, 1.4))
+            if mode == "cluster":
+                # 聚集中心（X8/Y3）附近密度显著抬高
+                dc = abs(x - 7) + abs(y - 2)
+                v += max(0.0, 8.0 - dc * 1.2)
+            elif mode == "density_drop":
+                v *= 0.55
+            row.append(round(v, 1))
         g.append(row)
     return g
 
@@ -943,11 +1098,44 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/ndbc/status":
             return self._json(ndbc.status())
 
+        # ---------- 环境板块扩展接口（刘伟豪的 backend/api/env.py）----------
+        # 他的 PR 说明里写着「需队长在 server.py 挂载 backend/api/env.py」——
+        # 挂载要改公共文件，按约定留给我做。**他做对了，这正是设计好的流程。**
+        if p == "/api/env/ndbc-ranges":
+            return self._json(envapi.ndbc_ranges())
+
+        if p == "/api/env/historical":
+            try:
+                return self._json(envapi.historical(
+                    one("site_id", "site_01"),
+                    int(one("start_ts", "0") or 0),
+                    int(one("end_ts", "0") or 0),
+                    int(one("max_points", "720") or 720)))
+            except ValueError as e:
+                return self._err(400, "参数错误：%s" % e)
+
+        if p == "/api/env/storm":
+            return self._json(envapi.storm(
+                one("site_id", "site_01"),
+                int(one("minutes", "60") or 60),
+                one("storm_type", "all"),
+                one("heat", "0") in ("1", "true"),
+                one("offline", "0") in ("1", "true"),
+                int(one("seed", "0")) or None))
+
+        if p == "/api/env/sim-control":
+            return self._json(envapi.sim_snapshot())
+
         if p == "/api/fish":
             return self._json(fish_series(minutes))
 
         if p == "/api/heatmap":
-            return self._json({"grid": heat_grid(), "resolution": "10x10"})
+            g = heat_grid()
+            return self._json({"grid": g, "resolution": "10x10",
+                               "offline": g is None})
+
+        if p == "/api/fish/sim":
+            return self._json(fish_sim_state())
 
         if p == "/api/struct":
             # storm 透传：造故障「大风大浪」要能让网箱倾角真的抬起来，
@@ -1002,6 +1190,11 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             # ---------- 管理板块：写操作 ----------
+            # 环境仿真控制：暂停/恢复某个站点的数据生成（界面上的「暂停生成」）
+            if p == "/api/env/sim-control":
+                r = envapi.sim_toggle(body)
+                return self._json(r) if r.get("ok") else self._err(400, r.get("error", "参数错误"))
+
             # 手动停止未到终态的命令（组员反馈：投喂要能中途停）
             m = re.match(r"^/api/commands/([\w\-]+)/cancel$", p)
             if m:
@@ -1074,6 +1267,13 @@ class Handler(BaseHTTPRequestHandler):
                     "fail_count": sum(1 for r in res if not r.get("ok")),
                     "status": ndbc.status(),
                 })
+
+            if p == "/api/fish/sim":
+                try:
+                    return self._json(fish_sim_control(body.get("action"),
+                                                       body.get("mode")))
+                except ValueError as e:
+                    return self._err(400, str(e))
 
             if p == "/api/commands":
                 did = body.get("device_id")
